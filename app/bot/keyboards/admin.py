@@ -224,6 +224,7 @@ def menu_button_actions(button: dict) -> InlineKeyboardMarkup:
             ],
             [InlineKeyboardButton(text="ویرایش متن و ایموجی", callback_data=f"admin_button_text:{action}")],
             [InlineKeyboardButton(text="رنگ", callback_data=f"admin_button_color:{action}")],
+            [InlineKeyboardButton(text="ایموجی پریمیوم", callback_data=f"admin_button_icon:{action}")],
             [InlineKeyboardButton(text=visible_text, callback_data=f"admin_button_toggle:{action}")],
             [InlineKeyboardButton(text="بازگشت", callback_data="admin:buttons")],
         ]

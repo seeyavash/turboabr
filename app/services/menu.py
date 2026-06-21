@@ -9,11 +9,11 @@ from app.services.settings import SettingsService
 
 MENU_BUTTONS_KEY = "user_menu_buttons"
 
-COLOR_PREFIXES = {
-    "none": "",
-    "green": "🟢",
-    "blue": "🔵",
-    "red": "🔴",
+BUTTON_STYLES = {
+    "none": None,
+    "green": "success",
+    "blue": "primary",
+    "red": "danger",
 }
 
 COLOR_LABELS = {
@@ -24,13 +24,13 @@ COLOR_LABELS = {
 }
 
 DEFAULT_MENU_BUTTONS = [
-    {"action": "buy_service", "label": "خرید سرویس", "color": "none", "visible": True},
-    {"action": "my_services", "label": "سرویس‌های من", "color": "none", "visible": True},
-    {"action": "wallet", "label": "کیف پول", "color": "none", "visible": True},
-    {"action": "invite", "label": "دعوت دوستان", "color": "none", "visible": True},
-    {"action": "charge_wallet", "label": "شارژ کیف پول", "color": "none", "visible": True},
-    {"action": "test_account", "label": "اکانت تست", "color": "none", "visible": True},
-    {"action": "support", "label": "پشتیبانی: @{support_username}", "color": "none", "visible": True},
+    {"action": "buy_service", "label": "خرید سرویس", "color": "none", "icon_custom_emoji_id": "", "visible": True},
+    {"action": "my_services", "label": "سرویس‌های من", "color": "none", "icon_custom_emoji_id": "", "visible": True},
+    {"action": "wallet", "label": "کیف پول", "color": "none", "icon_custom_emoji_id": "", "visible": True},
+    {"action": "invite", "label": "دعوت دوستان", "color": "none", "icon_custom_emoji_id": "", "visible": True},
+    {"action": "charge_wallet", "label": "شارژ کیف پول", "color": "none", "icon_custom_emoji_id": "", "visible": True},
+    {"action": "test_account", "label": "اکانت تست", "color": "none", "icon_custom_emoji_id": "", "visible": True},
+    {"action": "support", "label": "پشتیبانی: @{support_username}", "color": "none", "icon_custom_emoji_id": "", "visible": True},
 ]
 
 ACTION_LABELS = {
@@ -49,7 +49,8 @@ def normalize_buttons(buttons: list[dict]) -> list[dict]:
     normalized = []
     for default in DEFAULT_MENU_BUTTONS:
         current = {**default, **by_action.get(default["action"], {})}
-        current["color"] = current.get("color") if current.get("color") in COLOR_PREFIXES else "none"
+        current["color"] = current.get("color") if current.get("color") in BUTTON_STYLES else "none"
+        current["icon_custom_emoji_id"] = str(current.get("icon_custom_emoji_id") or "")
         current["visible"] = bool(current.get("visible", True))
         normalized.append(current)
     return normalized
@@ -93,8 +94,16 @@ class MenuService:
     async def set_color(self, action: str, color: str) -> None:
         buttons = await self.buttons()
         for button in buttons:
-            if button["action"] == action and color in COLOR_PREFIXES:
+            if button["action"] == action and color in BUTTON_STYLES:
                 button["color"] = color
+                break
+        await self.save_buttons(buttons)
+
+    async def set_icon(self, action: str, icon_custom_emoji_id: str) -> None:
+        buttons = await self.buttons()
+        for button in buttons:
+            if button["action"] == action:
+                button["icon_custom_emoji_id"] = icon_custom_emoji_id
                 break
         await self.save_buttons(buttons)
 
@@ -111,15 +120,23 @@ class MenuService:
 
     def display_text(self, button: dict) -> str:
         label = str(button.get("label") or "")
-        label = label.replace("{support_username}", env_settings.support_username)
-        prefix = COLOR_PREFIXES.get(str(button.get("color")), "")
-        return f"{prefix} {label}" if prefix else label
+        return label.replace("{support_username}", env_settings.support_username)
+
+    def keyboard_button(self, button: dict) -> KeyboardButton:
+        payload = {"text": self.display_text(button)}
+        style = BUTTON_STYLES.get(str(button.get("color")))
+        icon_custom_emoji_id = str(button.get("icon_custom_emoji_id") or "")
+        if style:
+            payload["style"] = style
+        if icon_custom_emoji_id:
+            payload["icon_custom_emoji_id"] = icon_custom_emoji_id
+        return KeyboardButton(**payload)
 
     async def reply_markup(self) -> ReplyKeyboardMarkup:
         visible = [button for button in await self.buttons() if button.get("visible", True)]
         rows = []
         for index in range(0, len(visible), 2):
-            rows.append([KeyboardButton(text=self.display_text(button)) for button in visible[index:index + 2]])
+            rows.append([self.keyboard_button(button) for button in visible[index:index + 2]])
         return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
     async def action_for_text(self, text: str) -> str | None:

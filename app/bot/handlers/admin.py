@@ -54,6 +54,7 @@ class AdminState(StatesGroup):
     card_holder = State()
     supergroup_chat_id = State()
     menu_button_text = State()
+    menu_button_icon = State()
     panel_name = State()
     panel_url = State()
     panel_username = State()
@@ -236,6 +237,7 @@ async def button_detail(callback: CallbackQuery, session: AsyncSession) -> None:
         f"دکمه: {ACTION_LABELS.get(action, action)}\n"
         f"متن فعلی: {button.get('label', '-')}\n"
         f"رنگ: {COLOR_LABELS.get(button.get('color'), 'بدون رنگ')}\n"
+        f"ایموجی پریمیوم: {button.get('icon_custom_emoji_id') or '-'}\n"
         f"وضعیت: {'نمایش داده می‌شود' if button.get('visible', True) else 'مخفی است'}\n\n"
         "برای جابه‌جایی از بالا/پایین استفاده کنید.",
         reply_markup=menu_button_actions(button),
@@ -254,6 +256,7 @@ async def replace_with_button_detail(callback: CallbackQuery, session: AsyncSess
         f"دکمه: {ACTION_LABELS.get(action, action)}\n"
         f"متن فعلی: {button.get('label', '-')}\n"
         f"رنگ: {COLOR_LABELS.get(button.get('color'), 'بدون رنگ')}\n"
+        f"ایموجی پریمیوم: {button.get('icon_custom_emoji_id') or '-'}\n"
         f"وضعیت: {'نمایش داده می‌شود' if button.get('visible', True) else 'مخفی است'}\n\n"
         "برای جابه‌جایی از بالا/پایین استفاده کنید.",
         reply_markup=menu_button_actions(button),
@@ -310,10 +313,42 @@ async def button_color_start(callback: CallbackQuery, session: AsyncSession) -> 
     await replace_message(
         callback,
         "رنگ دکمه را انتخاب کنید.\n"
-        "تلگرام برای reply keyboard رنگ واقعی جداگانه نمی‌دهد؛ رنگ به صورت نشانگر کنار متن نمایش داده می‌شود.",
+        "این رنگ با فیلد رسمی KeyboardButton.style تلگرام ارسال می‌شود.",
         reply_markup=menu_button_color_keyboard(action),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_button_icon:"))
+async def button_icon_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    action = callback.data.split(":", 1)[1]
+    await state.clear()
+    await state.update_data(menu_button_action=action, prompt_message_id=callback.message.message_id)
+    await state.set_state(AdminState.menu_button_icon)
+    await replace_message(
+        callback,
+        "شناسه custom emoji پریمیوم را ارسال کنید.\n"
+        "برای حذف ایموجی، `-` بفرستید.\n"
+        "این مقدار در فیلد رسمی `icon_custom_emoji_id` ذخیره می‌شود.",
+    )
+    await callback.answer()
+
+
+@router.message(AdminState.menu_button_icon)
+async def button_icon_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    icon = (message.text or "").strip()
+    icon = "" if icon == "-" else icon
+    data = await state.get_data()
+    await MenuService(session).set_icon(data["menu_button_action"], icon)
+    await cleanup_step_prompt(message, state)
+    await state.clear()
+    await message.answer("ایموجی پریمیوم دکمه ذخیره شد.")
 
 
 @router.callback_query(F.data.startswith("admin_button_set_color:"))
