@@ -3,8 +3,6 @@ from datetime import UTC, datetime, timedelta
 
 from aiohttp import ClientSession, ClientTimeout
 
-from app.core.config import settings
-
 logger = logging.getLogger(__name__)
 
 
@@ -21,17 +19,17 @@ class PasarGuardClient:
         group_ids: list[int] | None = None,
         subscription_client_type: str | None = None,
     ) -> None:
-        self.base_url = (base_url or settings.pasarguard_base_url).rstrip("/")
-        self.username = username or settings.pasarguard_username
-        self.password = password or settings.pasarguard_password
-        self.group_ids = group_ids if group_ids is not None else settings.pasarguard_default_group_ids
-        self.subscription_client_type = subscription_client_type or settings.pasarguard_subscription_client_type
+        self.base_url = (base_url or "").rstrip("/")
+        self.username = username or ""
+        self.password = password or ""
+        self.group_ids = group_ids if group_ids is not None else []
+        self.subscription_client_type = subscription_client_type or "v2ray"
         self._token: str | None = None
         self._token_until: datetime | None = None
 
     async def _request(self, method: str, path: str, **kwargs) -> dict | list | str | None:
         if not self.base_url:
-            raise PasarGuardError("PASARGUARD_BASE_URL is not configured")
+            raise PasarGuardError("PasarGuard panel is not configured")
         headers = kwargs.pop("headers", {})
         if path != "/api/admin/token":
             headers["Authorization"] = f"Bearer {await self.token()}"
