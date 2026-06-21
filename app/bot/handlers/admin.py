@@ -319,7 +319,10 @@ async def button_text_save(message: Message, state: FSMContext, session: AsyncSe
     await MenuService(session).set_label(data["menu_button_action"], text)
     await cleanup_step_prompt(message, state)
     await state.clear()
-    await message.answer("متن دکمه ذخیره شد.")
+    await message.answer(
+        "متن دکمه ذخیره شد. کیبورد جدید:",
+        reply_markup=await MenuService(session).reply_markup(),
+    )
 
 
 @router.callback_query(F.data.startswith("admin_button_color:"))
@@ -348,7 +351,7 @@ async def button_icon_start(callback: CallbackQuery, state: FSMContext, session:
     await state.set_state(AdminState.menu_button_icon)
     await replace_message(
         callback,
-        "شناسه custom emoji پریمیوم را ارسال کنید.\n"
+        "خود ایموجی پریمیوم یا شناسه custom emoji را ارسال کنید.\n"
         "برای حذف ایموجی، `-` بفرستید.\n"
         "این مقدار در فیلد رسمی `icon_custom_emoji_id` ذخیره می‌شود.",
     )
@@ -361,12 +364,19 @@ async def button_icon_save(message: Message, state: FSMContext, session: AsyncSe
         await message.answer("دسترسی ندارید.")
         return
     icon = (message.text or "").strip()
+    for entity in message.entities or []:
+        if entity.type == "custom_emoji" and entity.custom_emoji_id:
+            icon = entity.custom_emoji_id
+            break
     icon = "" if icon == "-" else icon
     data = await state.get_data()
     await MenuService(session).set_icon(data["menu_button_action"], icon)
     await cleanup_step_prompt(message, state)
     await state.clear()
-    await message.answer("ایموجی پریمیوم دکمه ذخیره شد.")
+    await message.answer(
+        "ایموجی پریمیوم دکمه ذخیره شد. کیبورد جدید:",
+        reply_markup=await MenuService(session).reply_markup(),
+    )
 
 
 @router.callback_query(F.data.startswith("admin_button_set_color:"))

@@ -31,7 +31,7 @@ DEFAULT_MENU_BUTTONS = [
     {"action": "invite", "label": "دعوت دوستان", "color": "none", "icon_custom_emoji_id": "", "visible": True},
     {"action": "charge_wallet", "label": "شارژ کیف پول", "color": "none", "icon_custom_emoji_id": "", "visible": True},
     {"action": "test_account", "label": "اکانت تست", "color": "none", "icon_custom_emoji_id": "", "visible": True},
-    {"action": "support", "label": "پشتیبانی: @{support_username}", "color": "none", "icon_custom_emoji_id": "", "visible": True},
+    {"action": "support", "label": "پشتیبانی", "color": "none", "icon_custom_emoji_id": "", "visible": True},
 ]
 
 ACTION_LABELS = {
