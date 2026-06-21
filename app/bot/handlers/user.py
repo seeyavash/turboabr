@@ -1,4 +1,6 @@
 import re
+import secrets
+import string
 from io import BytesIO
 
 from aiogram import F, Router
@@ -55,8 +57,14 @@ class BuyService(StatesGroup):
     username = State()
 
 
-USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,32}$")
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,27}$")
 AUTO_USERNAME_TEXT = "انتخاب نام خودکار"
+USERNAME_SUFFIX_CHARS = string.ascii_letters + string.digits
+
+
+def with_random_username_suffix(username: str) -> str:
+    suffix = "".join(secrets.choice(USERNAME_SUFFIX_CHARS) for _ in range(4))
+    return f"{username}_{suffix}"
 
 
 async def show_main_menu(message: Message, session: AsyncSession, text: str = "به منوی اصلی برگشتید.") -> None:
@@ -202,7 +210,9 @@ async def buy_plan_confirmed(callback: CallbackQuery, state: FSMContext, session
     await callback.message.edit_text(
         "برای سرویس خود یک نام انتخاب کنید.\n"
         "فقط حروف انگلیسی، عدد و _ مجاز است.\n"
-        "مثال: ali123 یا ali_home",
+        "طول نام بین ۳ تا ۲۷ کاراکتر باشد.\n"
+        "مثال: ali123 یا ali_home\n"
+        "ربات به آخر نام یک کد ۴ کاراکتری اضافه می‌کند. مثال: ali_home_J2k6",
     )
     await callback.message.answer("نام اکانت را ارسال کنید:", reply_markup=service_name_keyboard())
     await callback.answer()
@@ -218,10 +228,12 @@ async def buy_service_username(message: Message, state: FSMContext, session: Asy
     username = None if text == AUTO_USERNAME_TEXT else text
     if username and not USERNAME_RE.fullmatch(username):
         await message.answer(
-            "نام اکانت درست نیست.\nفقط حروف انگلیسی، عدد و _ مجاز است و طول باید بین ۳ تا ۳۲ کاراکتر باشد.",
+            "نام اکانت درست نیست.\nفقط حروف انگلیسی، عدد و _ مجاز است و طول باید بین ۳ تا ۲۷ کاراکتر باشد.",
             reply_markup=service_name_keyboard(),
         )
         return
+    if username:
+        username = with_random_username_suffix(username)
     data = await state.get_data()
     plan = await session.get(ProductPlan, int(data.get("plan_id", 0)))
     if not plan or not plan.is_active:
