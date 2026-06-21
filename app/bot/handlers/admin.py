@@ -21,12 +21,16 @@ from app.bot.keyboards.admin import (
     plan_actions,
     store_menu,
     supergroup_menu,
+    menu_button_actions,
+    menu_button_color_keyboard,
+    menu_buttons_keyboard,
     test_panel_keyboard,
     test_settings_menu,
     user_services_menu,
 )
 from app.db.models import PanelTemplate, PasarGuardPanel, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, User, VpnService
 from app.services.catalog import CatalogService
+from app.services.menu import ACTION_LABELS, COLOR_LABELS, MenuService
 from app.services.notifications import send_supergroup_message
 from app.services.payments import PaymentService
 from app.services.services import VpnServiceManager
@@ -49,6 +53,7 @@ class AdminState(StatesGroup):
     card_number = State()
     card_holder = State()
     supergroup_chat_id = State()
+    menu_button_text = State()
     panel_name = State()
     panel_url = State()
     panel_username = State()
@@ -197,6 +202,150 @@ async def dashboard(callback: CallbackQuery, session: AsyncSession) -> None:
         f"تعداد کاربران: {users}\nسرویس‌های فعال: {active}\nسرویس‌های غیرفعال: {disabled}\nمجموع موجودی کیف پول‌ها: {wallet_sum:,} تومان"
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin:buttons")
+async def buttons_editor(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    await state.clear()
+    buttons = await MenuService(session).buttons()
+    await replace_message(
+        callback,
+        "ویرایش دکمه‌های منوی کاربر\n"
+        "ترتیب نمایش دقیقاً طبق همین لیست است. هر دکمه را انتخاب کنید.",
+        reply_markup=menu_buttons_keyboard(buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_button:"))
+async def button_detail(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    action = callback.data.split(":", 1)[1]
+    buttons = await MenuService(session).buttons()
+    button = next((item for item in buttons if item["action"] == action), None)
+    if not button:
+        await callback.answer("دکمه پیدا نشد.", show_alert=True)
+        return
+    await replace_message(
+        callback,
+        f"دکمه: {ACTION_LABELS.get(action, action)}\n"
+        f"متن فعلی: {button.get('label', '-')}\n"
+        f"رنگ: {COLOR_LABELS.get(button.get('color'), 'بدون رنگ')}\n"
+        f"وضعیت: {'نمایش داده می‌شود' if button.get('visible', True) else 'مخفی است'}\n\n"
+        "برای جابه‌جایی از بالا/پایین استفاده کنید.",
+        reply_markup=menu_button_actions(button),
+    )
+    await callback.answer()
+
+
+async def replace_with_button_detail(callback: CallbackQuery, session: AsyncSession, action: str) -> None:
+    buttons = await MenuService(session).buttons()
+    button = next((item for item in buttons if item["action"] == action), None)
+    if not button:
+        await replace_message(callback, "دکمه پیدا نشد.", reply_markup=menu_buttons_keyboard(buttons))
+        return
+    await replace_message(
+        callback,
+        f"دکمه: {ACTION_LABELS.get(action, action)}\n"
+        f"متن فعلی: {button.get('label', '-')}\n"
+        f"رنگ: {COLOR_LABELS.get(button.get('color'), 'بدون رنگ')}\n"
+        f"وضعیت: {'نمایش داده می‌شود' if button.get('visible', True) else 'مخفی است'}\n\n"
+        "برای جابه‌جایی از بالا/پایین استفاده کنید.",
+        reply_markup=menu_button_actions(button),
+    )
+
+
+@router.callback_query(F.data.startswith("admin_button_move:"))
+async def button_move(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    _, action, direction = callback.data.split(":", 2)
+    await MenuService(session).move(action, int(direction))
+    buttons = await MenuService(session).buttons()
+    await replace_message(callback, "ترتیب دکمه‌ها بروزرسانی شد.", reply_markup=menu_buttons_keyboard(buttons))
+    await callback.answer("جابجا شد.")
+
+
+@router.callback_query(F.data.startswith("admin_button_text:"))
+async def button_text_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    action = callback.data.split(":", 1)[1]
+    await state.clear()
+    await state.update_data(menu_button_action=action, prompt_message_id=callback.message.message_id)
+    await state.set_state(AdminState.menu_button_text)
+    await replace_message(callback, "متن جدید دکمه را ارسال کنید.\nایموجی معمولی را می‌توانید داخل متن بگذارید.")
+    await callback.answer()
+
+
+@router.message(AdminState.menu_button_text)
+async def button_text_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    text = (message.text or "").strip()
+    if not text:
+        await send_step_prompt(message, state, "متن دکمه نمی‌تواند خالی باشد. دوباره ارسال کنید:")
+        return
+    data = await state.get_data()
+    await MenuService(session).set_label(data["menu_button_action"], text)
+    await cleanup_step_prompt(message, state)
+    await state.clear()
+    await message.answer("متن دکمه ذخیره شد.")
+
+
+@router.callback_query(F.data.startswith("admin_button_color:"))
+async def button_color_start(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    action = callback.data.split(":", 1)[1]
+    await replace_message(
+        callback,
+        "رنگ دکمه را انتخاب کنید.\n"
+        "تلگرام برای reply keyboard رنگ واقعی جداگانه نمی‌دهد؛ رنگ به صورت نشانگر کنار متن نمایش داده می‌شود.",
+        reply_markup=menu_button_color_keyboard(action),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_button_set_color:"))
+async def button_color_save(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    _, action, color = callback.data.split(":", 2)
+    await MenuService(session).set_color(action, color)
+    await replace_with_button_detail(callback, session, action)
+    await callback.answer("رنگ ذخیره شد.")
+
+
+@router.callback_query(F.data.startswith("admin_button_toggle:"))
+async def button_toggle(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    action = callback.data.split(":", 1)[1]
+    await MenuService(session).toggle_visible(action)
+    await replace_with_button_detail(callback, session, action)
+    await callback.answer("ذخیره شد.")
+
+
+@router.callback_query(F.data == "admin_buttons_reset")
+async def buttons_reset(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    await MenuService(session).reset()
+    await replace_message(callback, "منو به حالت پیش‌فرض برگشت.", reply_markup=menu_buttons_keyboard(await MenuService(session).buttons()))
+    await callback.answer("بازنشانی شد.")
 
 
 @router.callback_query(F.data == "admin:panels")

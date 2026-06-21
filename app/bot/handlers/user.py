@@ -6,12 +6,13 @@ from aiogram.types import CallbackQuery, LabeledPrice, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.keyboards.common import main_menu, payment_methods, plan_detail_actions, receipt_button, service_actions, service_types
+from app.bot.keyboards.common import payment_methods, plan_detail_actions, receipt_button, service_actions, service_types
 from app.core.config import settings as env_settings
 from app.db.models import PaymentMethod, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, User, VpnService
 from app.integrations.pasarguard import PasarGuardError
 from app.services.notifications import send_supergroup_message, send_supergroup_photo
 from app.services.catalog import CatalogService
+from app.services.menu import MenuService
 from app.services.payments import PaymentService
 from app.services.services import VpnServiceManager
 from app.services.settings import SettingsService
@@ -48,10 +49,12 @@ async def start(message: Message, session: AsyncSession) -> None:
         f"یوزرنیم: @{user.username or '-'}\n"
         f"آیدی عددی: {user.telegram_id}",
     )
-    await message.answer(f"خوش آمدید.\nموجودی کیف پول: {user.wallet_balance_toman:,} تومان", reply_markup=main_menu())
+    await message.answer(
+        f"خوش آمدید.\nموجودی کیف پول: {user.wallet_balance_toman:,} تومان",
+        reply_markup=await MenuService(session).reply_markup(),
+    )
 
 
-@router.message(F.text == "خرید سرویس")
 async def buy_service(message: Message, session: AsyncSession) -> None:
     user = await UserService(session).get_or_create(message.from_user)
     if user.is_blocked:
@@ -143,7 +146,6 @@ async def buy_plan_confirmed(callback: CallbackQuery, session: AsyncSession) -> 
     await callback.answer()
 
 
-@router.message(F.text == "اکانت تست")
 async def test_account(message: Message, session: AsyncSession) -> None:
     user = await UserService(session).get_or_create(message.from_user)
     if user.is_blocked:
@@ -188,7 +190,6 @@ async def test_account(message: Message, session: AsyncSession) -> None:
     await message.answer(f"اکانت تست شما فعال شد: ۱۰۰ مگابایت، ۱ روز.\n{service.subscription_url}")
 
 
-@router.message(F.text == "سرویس‌های من")
 async def my_services(message: Message, session: AsyncSession) -> None:
     user = await UserService(session).get_or_create(message.from_user)
     result = await session.execute(
@@ -250,20 +251,17 @@ async def delete_service(callback: CallbackQuery, session: AsyncSession) -> None
     await callback.answer()
 
 
-@router.message(F.text == "کیف پول")
 async def wallet(message: Message, session: AsyncSession) -> None:
     user = await UserService(session).get_or_create(message.from_user)
     await message.answer(f"موجودی کیف پول: {user.wallet_balance_toman:,} تومان")
 
 
-@router.message(F.text == "دعوت دوستان")
 async def invite(message: Message, session: AsyncSession) -> None:
     await UserService(session).get_or_create(message.from_user)
     bot = await message.bot.get_me()
     await message.answer(f"لینک دعوت شما:\nhttps://t.me/{bot.username}?start=ref_{message.from_user.id}")
 
 
-@router.message(F.text == "شارژ کیف پول")
 async def charge_wallet(message: Message, state: FSMContext, session: AsyncSession) -> None:
     user = await UserService(session).get_or_create(message.from_user)
     if user.is_blocked:
@@ -376,6 +374,24 @@ async def stars_paid(message: Message, session: AsyncSession) -> None:
     await message.answer(f"کیف پول شما به مبلغ {amount:,} تومان شارژ شد.")
 
 
-@router.message(F.text.startswith("پشتیبانی:"))
 async def support(message: Message) -> None:
     await message.answer(f"پشتیبانی: @{env_settings.support_username}")
+
+
+@router.message(F.text)
+async def user_menu_dispatch(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    action = await MenuService(session).action_for_text(message.text or "")
+    if action == "buy_service":
+        await buy_service(message, session)
+    elif action == "my_services":
+        await my_services(message, session)
+    elif action == "wallet":
+        await wallet(message, session)
+    elif action == "invite":
+        await invite(message, session)
+    elif action == "charge_wallet":
+        await charge_wallet(message, state, session)
+    elif action == "test_account":
+        await test_account(message, session)
+    elif action == "support":
+        await support(message)

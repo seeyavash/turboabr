@@ -1,18 +1,6 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.db.models import PaymentMethod, ProductPlan
-
-
-def main_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="خرید سرویس"), KeyboardButton(text="سرویس‌های من")],
-            [KeyboardButton(text="کیف پول"), KeyboardButton(text="دعوت دوستان")],
-            [KeyboardButton(text="شارژ کیف پول"), KeyboardButton(text="اکانت تست")],
-            [KeyboardButton(text="پشتیبانی: @kasrazandi")],
-        ],
-        resize_keyboard=True,
-    )
 
 
 def service_types(plans: list[ProductPlan]) -> InlineKeyboardMarkup:

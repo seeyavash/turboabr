@@ -1,5 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.services.menu import COLOR_LABELS
+
 
 def admin_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -11,6 +13,7 @@ def admin_menu() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="تنظیمات پرداخت", callback_data="admin:payment_settings")],
             [InlineKeyboardButton(text="خدمات کاربر", callback_data="admin:user_services")],
             [InlineKeyboardButton(text="تنظیم سوپرگروه", callback_data="admin:supergroup")],
+            [InlineKeyboardButton(text="ویرایش دکمه‌ها", callback_data="admin:buttons")],
         ]
     )
 
@@ -191,6 +194,49 @@ def supergroup_menu() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="بازگشت", callback_data="admin:menu")],
         ]
     )
+
+
+def menu_buttons_keyboard(buttons: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for index, button in enumerate(buttons, start=1):
+        status = "✅" if button.get("visible", True) else "🚫"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{index}. {status} {button.get('label', '')}",
+                    callback_data=f"admin_button:{button['action']}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="بازنشانی منو", callback_data="admin_buttons_reset")])
+    rows.append([InlineKeyboardButton(text="بازگشت", callback_data="admin:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def menu_button_actions(button: dict) -> InlineKeyboardMarkup:
+    action = button["action"]
+    visible_text = "مخفی کردن" if button.get("visible", True) else "نمایش دادن"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="بالا", callback_data=f"admin_button_move:{action}:-1"),
+                InlineKeyboardButton(text="پایین", callback_data=f"admin_button_move:{action}:1"),
+            ],
+            [InlineKeyboardButton(text="ویرایش متن و ایموجی", callback_data=f"admin_button_text:{action}")],
+            [InlineKeyboardButton(text="رنگ", callback_data=f"admin_button_color:{action}")],
+            [InlineKeyboardButton(text=visible_text, callback_data=f"admin_button_toggle:{action}")],
+            [InlineKeyboardButton(text="بازگشت", callback_data="admin:buttons")],
+        ]
+    )
+
+
+def menu_button_color_keyboard(action: str) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=label, callback_data=f"admin_button_set_color:{action}:{color}")]
+        for color, label in COLOR_LABELS.items()
+    ]
+    rows.append([InlineKeyboardButton(text="بازگشت", callback_data=f"admin_button:{action}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def user_services_menu() -> InlineKeyboardMarkup:
