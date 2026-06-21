@@ -66,10 +66,15 @@ def panel_list_actions(panel_id: int) -> InlineKeyboardMarkup:
 
 
 def panels_list_keyboard(panels) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text=f"{panel.name} #{panel.id}", callback_data=f"admin_panel_view:{panel.id}")]
-        for panel in panels
-    ]
+    rows = []
+    for panel in panels:
+        rows.append([InlineKeyboardButton(text=f"{panel.name} #{panel.id}", callback_data=f"admin_panel_view:{panel.id}")])
+        rows.append(
+            [
+                InlineKeyboardButton(text="ویرایش", callback_data=f"admin_panel_edit:{panel.id}"),
+                InlineKeyboardButton(text="افزودن تمپلیت", callback_data=f"admin_template_add:{panel.id}"),
+            ]
+        )
     rows.append([InlineKeyboardButton(text="بازگشت", callback_data="admin:panels")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
