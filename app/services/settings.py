@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,4 +69,3 @@ class SettingsService:
         for key in sorted(keys):
             result[key] = "***" if key in SECRET_KEYS and await self.get(key) else await self.get(key)
         return result
-
