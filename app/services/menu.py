@@ -9,6 +9,7 @@ from app.services.settings import SettingsService
 
 MENU_BUTTONS_KEY = "user_menu_buttons"
 MENU_COLUMNS = 2
+LTR_MARK = "\u200e"
 
 BUTTON_STYLES = {
     "none": None,
@@ -162,16 +163,18 @@ class MenuService:
     def display_text(self, button: dict) -> str:
         label = str(button.get("label") or "")
         text = label.replace("{support_username}", env_settings.support_username)
-        icon_text = str(button.get("icon_text") or "").strip()
-        if icon_text and not text.startswith(icon_text):
-            return f"{icon_text} {text}"
+        if button.get("icon_custom_emoji_id") and not text.startswith(LTR_MARK):
+            return f"{LTR_MARK}{text}"
         return text
 
     def keyboard_button(self, button: dict) -> KeyboardButton:
         payload = {"text": self.display_text(button)}
         style = BUTTON_STYLES.get(str(button.get("color")))
+        icon_custom_emoji_id = str(button.get("icon_custom_emoji_id") or "")
         if style:
             payload["style"] = style
+        if icon_custom_emoji_id:
+            payload["icon_custom_emoji_id"] = icon_custom_emoji_id
         return KeyboardButton(**payload)
 
     async def reply_markup(self) -> ReplyKeyboardMarkup:
