@@ -661,6 +661,7 @@ async def plan_panel_step(callback: CallbackQuery, state: FSMContext, session: A
             panel_id=panel.id,
         )
     except Exception as exc:
+        await session.rollback()
         await state.clear()
         await replace_message(callback, f"خطا در ذخیره تعرفه:\n{exc}", reply_markup=store_menu())
         await callback.answer()
