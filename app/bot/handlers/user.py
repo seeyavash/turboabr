@@ -8,7 +8,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import qrcode
-from aiogram.types import BufferedInputFile, CallbackQuery, LabeledPrice, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -559,7 +559,16 @@ async def stars_paid(message: Message, session: AsyncSession) -> None:
 
 
 async def support(message: Message) -> None:
-    await message.answer(f"پشتیبانی: @{env_settings.support_username}")
+    await safe_delete_message(message)
+    username = env_settings.support_username.lstrip("@")
+    await message.answer(
+        "برای ارتباط با پشتیبانی روی دکمه زیر بزنید:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="ورود به پشتیبانی", url=f"https://t.me/{username}")]
+            ]
+        ),
+    )
 
 
 @router.callback_query(F.data.in_({"user_cancel", "user_services_back"}))
