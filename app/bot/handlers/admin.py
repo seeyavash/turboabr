@@ -17,6 +17,7 @@ from app.bot.keyboards.admin import (
     plan_panel_keyboard,
     panels_menu,
     payment_settings_menu,
+    payment_toggle_keyboard,
     plan_actions,
     store_menu,
     user_services_menu,
@@ -41,6 +42,8 @@ def status_label(status: str) -> str:
 
 class AdminState(StatesGroup):
     set_value = State()
+    card_number = State()
+    card_holder = State()
     panel_name = State()
     panel_url = State()
     panel_username = State()
@@ -219,11 +222,20 @@ async def admins_section(callback: CallbackQuery, session: AsyncSession) -> None
     await callback.answer()
 
 
+def payment_value_label(key: str, value: str | None) -> str:
+    if key.startswith("payment_") and key.endswith("_enabled"):
+        return "فعال" if str(value).lower() == "true" else "غیرفعال"
+    if key in {"plisio_api_token", "nowpayments_api_token"}:
+        return "ثبت شده" if value else "ثبت نشده"
+    return value or "-"
+
+
 @router.callback_query(F.data == "admin:payment_settings")
-async def payment_settings_section(callback: CallbackQuery, session: AsyncSession) -> None:
+async def payment_settings_section(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
+    await state.clear()
     values = await SettingsService(session).all_public()
     wanted = [
         "card_number",
@@ -247,7 +259,7 @@ async def payment_settings_section(callback: CallbackQuery, session: AsyncSessio
         "nowpayments_api_token": "توکن NOWPayments",
         "stars_to_toman_rate": "نرخ هر استار",
     }
-    lines = [f"{labels[key]}: {values.get(key)}" for key in wanted]
+    lines = [f"{labels[key]}: {payment_value_label(key, values.get(key))}" for key in wanted]
     await replace_message(callback, "\n".join(lines), reply_markup=payment_settings_menu())
     await callback.answer()
 
@@ -941,10 +953,87 @@ async def admin_set_start(callback: CallbackQuery, state: FSMContext, session: A
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     key = callback.data.split(":", 1)[1]
+    labels = {
+        "card_info": "اطلاعات کارت",
+        "payment_card_enabled": "وضعیت کارت به کارت",
+        "payment_plisio_enabled": "وضعیت Plisio",
+        "payment_nowpayments_enabled": "وضعیت NOWPayments",
+        "payment_stars_enabled": "وضعیت استارز",
+        "plisio_api_token": "توکن Plisio",
+        "nowpayments_api_token": "توکن NOWPayments",
+        "stars_to_toman_rate": "نرخ هر استار",
+        "low_balance_threshold": "حد هشدار کمبود موجودی",
+        "referral_cashback_percent": "درصد کش‌بک معرفی",
+    }
+    current = await SettingsService(session).get(key, "")
+    await state.clear()
     await state.update_data(setting_key=key)
+    if key == "card_info":
+        current_card = await SettingsService(session).get("card_number", "")
+        await state.update_data(prompt_message_id=callback.message.message_id)
+        await state.set_state(AdminState.card_number)
+        await replace_message(callback, f"شماره کارت را وارد کنید.\nمقدار فعلی: {current_card or '-'}")
+        await callback.answer()
+        return
+    if key.startswith("payment_") and key.endswith("_enabled"):
+        await replace_message(
+            callback,
+            f"{labels.get(key, key)} را انتخاب کنید.\nوضعیت فعلی: {payment_value_label(key, current)}",
+            reply_markup=payment_toggle_keyboard(key),
+        )
+        await callback.answer()
+        return
     await state.set_state(AdminState.set_value)
-    await callback.message.answer(f"مقدار جدید را برای `{key}` ارسال کنید.\nبرای اطلاعات کارت از این فرمت استفاده کنید:\nشماره کارت | نام صاحب کارت")
+    await replace_message(
+        callback,
+        f"{labels.get(key, key)} را وارد کنید.\n"
+        f"مقدار فعلی: {payment_value_label(key, current)}",
+    )
     await callback.answer()
+
+
+@router.message(AdminState.card_number)
+async def admin_card_number(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    card = (message.text or "").strip().replace(" ", "").replace("-", "")
+    if not card.isdigit() or len(card) < 12:
+        await send_step_prompt(message, state, "شماره کارت معتبر نیست. شماره کارت را فقط عددی وارد کنید:")
+        return
+    await state.update_data(card_number=card)
+    holder = await SettingsService(session).get("card_holder", "")
+    await state.set_state(AdminState.card_holder)
+    await send_step_prompt(message, state, f"نام صاحب کارت را وارد کنید.\nمقدار فعلی: {holder or '-'}")
+
+
+@router.message(AdminState.card_holder)
+async def admin_card_holder(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    holder = (message.text or "").strip()
+    if not holder:
+        await send_step_prompt(message, state, "نام صاحب کارت نمی‌تواند خالی باشد. دوباره وارد کنید:")
+        return
+    data = await state.get_data()
+    settings = SettingsService(session)
+    await settings.set("card_number", data["card_number"])
+    await settings.set("card_holder", holder)
+    await cleanup_step_prompt(message, state)
+    await state.clear()
+    await message.answer("اطلاعات کارت ذخیره شد.")
+
+
+@router.callback_query(F.data.startswith("admin_set_bool:"))
+async def admin_set_bool(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    _, key, value = callback.data.split(":", 2)
+    await SettingsService(session).set(key, value)
+    await replace_message(callback, "وضعیت ذخیره شد.", reply_markup=payment_settings_menu())
+    await callback.answer("ذخیره شد.")
 
 
 @router.message(AdminState.set_value)
@@ -955,16 +1044,11 @@ async def admin_set_value(message: Message, state: FSMContext, session: AsyncSes
     data = await state.get_data()
     key = data["setting_key"]
     service = SettingsService(session)
-    if key == "card_info":
-        parts = [part.strip() for part in (message.text or "").split("|", 1)]
-        if len(parts) != 2:
-            await message.answer("فرمت درست: شماره کارت | نام صاحب کارت")
-            return
-        card, holder = parts
-        await service.set("card_number", card)
-        await service.set("card_holder", holder)
-    else:
-        await service.set(key, message.text or "")
+    value = (message.text or "").strip()
+    if key == "stars_to_toman_rate" and (not value.isdigit() or int(value) <= 0):
+        await message.answer("نرخ هر استار باید عددی و بیشتر از صفر باشد.")
+        return
+    await service.set(key, value)
     await state.clear()
     await message.answer("ذخیره شد.")
 

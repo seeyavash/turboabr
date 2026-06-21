@@ -152,6 +152,18 @@ def payment_settings_menu() -> InlineKeyboardMarkup:
     )
 
 
+def payment_toggle_keyboard(key: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="فعال", callback_data=f"admin_set_bool:{key}:true"),
+                InlineKeyboardButton(text="غیرفعال", callback_data=f"admin_set_bool:{key}:false"),
+            ],
+            [InlineKeyboardButton(text="بازگشت", callback_data="admin:payment_settings")],
+        ]
+    )
+
+
 def user_services_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
