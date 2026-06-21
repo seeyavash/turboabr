@@ -6,7 +6,7 @@ from aiogram.types import CallbackQuery, LabeledPrice, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.keyboards.common import main_menu, payment_methods, receipt_button, service_actions, service_types
+from app.bot.keyboards.common import main_menu, payment_methods, plan_detail_actions, receipt_button, service_actions, service_types
 from app.core.config import settings as env_settings
 from app.db.models import PaymentMethod, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, VpnService
 from app.services.catalog import CatalogService
@@ -54,6 +54,33 @@ async def buy_service(message: Message, session: AsyncSession) -> None:
 
 @router.callback_query(F.data.startswith("buy_plan:"))
 async def buy_plan_selected(callback: CallbackQuery, session: AsyncSession) -> None:
+    user = await UserService(session).get_or_create(callback.from_user)
+    if user.is_blocked:
+        await callback.answer("حساب شما مسدود شده است.", show_alert=True)
+        return
+    plan_id = int(callback.data.split(":", 1)[1])
+    plan = await session.get(ProductPlan, plan_id)
+    if not plan or not plan.is_active:
+        await callback.answer("تعرفه پیدا نشد.", show_alert=True)
+        return
+    await callback.message.edit_text(
+        f"{plan.name}\n\n"
+        f"{plan.description or 'توضیحاتی برای این سرویس ثبت نشده است.'}\n\n"
+        f"قیمت هر گیگ: {plan.price_per_gb_toman:,} تومان",
+        reply_markup=plan_detail_actions(plan.id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "buy_plans_back")
+async def buy_plans_back(callback: CallbackQuery, session: AsyncSession) -> None:
+    plans = await CatalogService(session).active_plans()
+    await callback.message.edit_text("تعرفه موردنظر را انتخاب کنید:", reply_markup=service_types(plans))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("buy_plan_confirm:"))
+async def buy_plan_confirmed(callback: CallbackQuery, session: AsyncSession) -> None:
     user = await UserService(session).get_or_create(callback.from_user)
     if user.is_blocked:
         await callback.answer("حساب شما مسدود شده است.", show_alert=True)

@@ -93,6 +93,15 @@ def store_menu() -> InlineKeyboardMarkup:
     )
 
 
+def plan_panel_keyboard(panels) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=panel.name, callback_data=f"admin_plan_panel:{panel.id}")]
+        for panel in panels
+    ]
+    rows.append([InlineKeyboardButton(text="لغو", callback_data="admin:store")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def plan_actions(plan_id: int, active: bool) -> InlineKeyboardMarkup:
     toggle_text = "غیرفعال کردن" if active else "فعال کردن"
     toggle_action = "disable" if active else "enable"

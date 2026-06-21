@@ -20,11 +20,20 @@ def service_types(plans: list[ProductPlan]) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f"{plan.name} - {plan.price_per_gb_toman:,} تومان / گیگ",
+                    text=plan.name,
                     callback_data=f"buy_plan:{plan.id}",
                 )
             ]
             for plan in plans
+        ]
+    )
+
+
+def plan_detail_actions(plan_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="خرید این سرویس", callback_data=f"buy_plan_confirm:{plan_id}")],
+            [InlineKeyboardButton(text="بازگشت به تعرفه‌ها", callback_data="buy_plans_back")],
         ]
     )
 

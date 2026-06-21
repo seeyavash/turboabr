@@ -81,6 +81,7 @@ class ProductPlan(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str | None] = mapped_column(Text)
     price_per_gb_toman: Mapped[int] = mapped_column(BigInteger)
     panel_id: Mapped[int | None] = mapped_column(ForeignKey("pasarguard_panels.id"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

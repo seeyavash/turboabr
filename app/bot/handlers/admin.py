@@ -14,6 +14,7 @@ from app.bot.keyboards.admin import (
     admins_menu,
     panel_actions,
     panels_list_keyboard,
+    plan_panel_keyboard,
     panels_menu,
     payment_settings_menu,
     plan_actions,
@@ -47,7 +48,10 @@ class AdminState(StatesGroup):
     template_name = State()
     template_groups = State()
     template_client_type = State()
-    add_plan = State()
+    plan_name = State()
+    plan_description = State()
+    plan_price = State()
+    plan_panel = State()
     edit_plan = State()
     add_admin = State()
     user_lookup = State()
@@ -66,7 +70,7 @@ async def replace_message(callback: CallbackQuery, text: str, reply_markup=None)
         await callback.message.answer(text, reply_markup=reply_markup)
 
 
-async def send_step_prompt(message: Message, state: FSMContext, text: str) -> None:
+async def send_step_prompt(message: Message, state: FSMContext, text: str, reply_markup=None) -> None:
     data = await state.get_data()
     prompt_id = data.get("prompt_message_id")
     if prompt_id:
@@ -78,7 +82,7 @@ async def send_step_prompt(message: Message, state: FSMContext, text: str) -> No
         await message.delete()
     except Exception:
         pass
-    sent = await message.answer(text)
+    sent = await message.answer(text, reply_markup=reply_markup)
     await state.update_data(prompt_message_id=sent.message_id)
 
 
@@ -197,10 +201,11 @@ async def panels_section(callback: CallbackQuery, session: AsyncSession) -> None
 
 
 @router.callback_query(F.data == "admin:store")
-async def store_section(callback: CallbackQuery, session: AsyncSession) -> None:
+async def store_section(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
+    await state.clear()
     await replace_message(callback, "تنظیمات فروشگاه", reply_markup=store_menu())
     await callback.answer()
 
@@ -561,32 +566,109 @@ async def add_plan_start(callback: CallbackQuery, state: FSMContext, session: As
     if not await is_admin(session, callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await state.set_state(AdminState.add_plan)
-    await callback.message.answer(
-        "اطلاعات تعرفه را با این فرمت ارسال کنید:\n"
-        "نام تعرفه | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)\n"
-        "نمونه:\n"
-        "Multi Hoshmand | 9000 | 1"
-    )
+    panels = await CatalogService(session).active_panels()
+    if not panels:
+        await replace_message(callback, "اول از بخش مدیریت پنل‌ها یک پنل فعال اضافه کنید.", reply_markup=store_menu())
+        await callback.answer()
+        return
+    await state.clear()
+    await state.update_data(prompt_message_id=callback.message.message_id)
+    await state.set_state(AdminState.plan_name)
+    await replace_message(callback, "نام تعرفه را وارد کنید.\nمثال: مولتی هوشمند")
     await callback.answer()
 
 
-@router.message(AdminState.add_plan)
-async def add_plan_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
+@router.message(AdminState.plan_name)
+async def plan_name_step(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
         await message.answer("دسترسی ندارید.")
         return
-    parts = [part.strip() for part in (message.text or "").split("|")]
-    if len(parts) not in {2, 3}:
-        await message.answer("فرمت درست: نام تعرفه | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)")
+    name = (message.text or "").strip()
+    if not name:
+        await send_step_prompt(message, state, "نام تعرفه نمی‌تواند خالی باشد. دوباره نام را وارد کنید:")
         return
-    panel_id = int(parts[2]) if len(parts) == 3 and parts[2] else None
-    if panel_id and not await session.get(PasarGuardPanel, panel_id):
-        await message.answer("پنل پیدا نشد.")
+    await state.update_data(plan_name=name)
+    await state.set_state(AdminState.plan_description)
+    await send_step_prompt(
+        message,
+        state,
+        "توضیحات تعرفه را وارد کنید.\n"
+        "این متن بعد از زدن دکمه خرید سرویس به کاربر نمایش داده می‌شود.\n"
+        "مثال: هر گیگ ۹ هزار تومان، مناسب استفاده روزمره",
+    )
+
+
+@router.message(AdminState.plan_description)
+async def plan_description_step(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
         return
-    plan = await CatalogService(session).add_plan(parts[0], int(parts[1]), panel_id)
+    description = (message.text or "").strip()
+    if not description:
+        await send_step_prompt(message, state, "توضیحات نمی‌تواند خالی باشد. دوباره توضیحات را وارد کنید:")
+        return
+    await state.update_data(plan_description=description)
+    await state.set_state(AdminState.plan_price)
+    await send_step_prompt(message, state, "قیمت هر گیگ را به تومان و فقط عددی وارد کنید.\nمثال: 9000")
+
+
+@router.message(AdminState.plan_price)
+async def plan_price_step(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    raw_price = (message.text or "").replace(",", "").strip()
+    try:
+        price = int(raw_price)
+    except ValueError:
+        await send_step_prompt(message, state, "قیمت باید فقط عدد باشد. مثال: 9000")
+        return
+    if price <= 0:
+        await send_step_prompt(message, state, "قیمت باید بیشتر از صفر باشد. دوباره وارد کنید:")
+        return
+    panels = await CatalogService(session).active_panels()
+    if not panels:
+        await cleanup_step_prompt(message, state)
+        await state.clear()
+        await message.answer("هیچ پنل فعالی پیدا نشد. اول یک پنل فعال اضافه کنید.", reply_markup=store_menu())
+        return
+    await state.update_data(plan_price=price)
+    await state.set_state(AdminState.plan_panel)
+    await send_step_prompt(message, state, "این تعرفه روی کدام پنل ساخته شود؟", reply_markup=plan_panel_keyboard(panels))
+
+
+@router.callback_query(AdminState.plan_panel, F.data.startswith("admin_plan_panel:"))
+async def plan_panel_step(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    panel = await session.get(PasarGuardPanel, int(callback.data.split(":", 1)[1]))
+    if not panel or not panel.is_active:
+        await callback.answer("پنل پیدا نشد یا غیرفعال است.", show_alert=True)
+        return
+    data = await state.get_data()
+    try:
+        plan = await CatalogService(session).add_plan(
+            name=data["plan_name"],
+            description=data["plan_description"],
+            price_per_gb_toman=data["plan_price"],
+            panel_id=panel.id,
+        )
+    except Exception as exc:
+        await state.clear()
+        await replace_message(callback, f"خطا در ذخیره تعرفه:\n{exc}", reply_markup=store_menu())
+        await callback.answer()
+        return
     await state.clear()
-    await message.answer(f"تعرفه اضافه شد: #{plan.id} {plan.name} - {plan.price_per_gb_toman:,} تومان / گیگ")
+    await replace_message(
+        callback,
+        f"تعرفه با موفقیت اضافه شد.\n\n"
+        f"#{plan.id} {plan.name}\n"
+        f"پنل: {panel.name}\n"
+        f"قیمت هر گیگ: {plan.price_per_gb_toman:,} تومان",
+        reply_markup=store_menu(),
+    )
+    await callback.answer("تعرفه اضافه شد.")
 
 
 @router.callback_query(F.data == "admin_plan:list")
@@ -603,6 +685,7 @@ async def plans_list(callback: CallbackQuery, session: AsyncSession) -> None:
             await callback.message.answer(
                 f"تعرفه #{plan.id}\n"
                 f"نام: {plan.name}\n"
+                f"توضیحات: {plan.description or '-'}\n"
                 f"قیمت: {plan.price_per_gb_toman:,} تومان / گیگ\n"
                 f"پنل: {plan.panel_id or 'پیش‌فرض'}\n"
                 f"فعال: {'بله' if plan.is_active else 'خیر'}",
@@ -625,10 +708,11 @@ async def edit_plan_start(callback: CallbackQuery, state: FSMContext, session: A
     await callback.message.answer(
         "اطلاعات فعلی تعرفه:\n"
         f"نام: {plan.name}\n"
+        f"توضیحات: {plan.description or '-'}\n"
         f"قیمت هر گیگ: {plan.price_per_gb_toman}\n"
         f"شناسه پنل: {plan.panel_id or ''}\n\n"
         "اطلاعات جدید را ارسال کنید:\n"
-        "نام تعرفه | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)"
+        "نام تعرفه | توضیحات | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)"
     )
     await callback.answer()
 
@@ -644,15 +728,21 @@ async def edit_plan_save(message: Message, state: FSMContext, session: AsyncSess
         await state.clear()
         return
     parts = [part.strip() for part in (message.text or "").split("|")]
-    if len(parts) not in {2, 3}:
-        await message.answer("فرمت درست: نام تعرفه | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)")
+    if len(parts) not in {3, 4}:
+        await message.answer("فرمت درست: نام تعرفه | توضیحات | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)")
         return
-    panel_id = int(parts[2]) if len(parts) == 3 and parts[2] else None
+    try:
+        price = int(parts[2].replace(",", ""))
+        panel_id = int(parts[3]) if len(parts) == 4 and parts[3] else None
+    except ValueError:
+        await message.answer("قیمت و شناسه پنل باید عددی باشند.")
+        return
     if panel_id and not await session.get(PasarGuardPanel, panel_id):
         await message.answer("پنل پیدا نشد.")
         return
     plan.name = parts[0]
-    plan.price_per_gb_toman = int(parts[1])
+    plan.description = parts[1]
+    plan.price_per_gb_toman = price
     plan.panel_id = panel_id
     await state.clear()
     await message.answer(f"تعرفه بروزرسانی شد: #{plan.id} {plan.name}")

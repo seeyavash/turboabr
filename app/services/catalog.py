@@ -50,9 +50,16 @@ class CatalogService:
         await self.session.flush()
         return panel
 
-    async def add_plan(self, name: str, price_per_gb_toman: int, panel_id: int | None = None) -> ProductPlan:
+    async def add_plan(
+        self,
+        name: str,
+        description: str | None,
+        price_per_gb_toman: int,
+        panel_id: int | None = None,
+    ) -> ProductPlan:
         plan = ProductPlan(
             name=name,
+            description=description,
             price_per_gb_toman=price_per_gb_toman,
             panel_id=panel_id,
             is_active=True,
