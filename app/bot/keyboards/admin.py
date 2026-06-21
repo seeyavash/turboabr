@@ -47,11 +47,31 @@ def panel_actions(panel_id: int, active: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="ویرایش", callback_data=f"admin_panel_edit:{panel_id}")],
+            [InlineKeyboardButton(text="افزودن تمپلیت", callback_data=f"admin_template_add:{panel_id}")],
+            [InlineKeyboardButton(text="لیست تمپلیت‌ها", callback_data=f"admin_template_list:{panel_id}")],
             [InlineKeyboardButton(text=toggle_text, callback_data=f"admin_panel_{toggle_action}:{panel_id}")],
             [InlineKeyboardButton(text="حذف", callback_data=f"admin_panel_delete:{panel_id}")],
             [InlineKeyboardButton(text="بازگشت", callback_data="admin:panels")],
         ]
     )
+
+
+def panel_list_actions(panel_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="مشاهده و مدیریت", callback_data=f"admin_panel_view:{panel_id}")],
+            [InlineKeyboardButton(text="بازگشت", callback_data="admin:panels")],
+        ]
+    )
+
+
+def panels_list_keyboard(panels) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=f"{panel.name} #{panel.id}", callback_data=f"admin_panel_view:{panel.id}")]
+        for panel in panels
+    ]
+    rows.append([InlineKeyboardButton(text="بازگشت", callback_data="admin:panels")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def store_menu() -> InlineKeyboardMarkup:

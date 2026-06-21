@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decrypt_secret, encrypt_secret
-from app.db.models import PasarGuardPanel, ProductPlan
+from app.db.models import PanelTemplate, PasarGuardPanel, ProductPlan
 from app.integrations.pasarguard import PasarGuardClient
 
 
@@ -19,6 +19,12 @@ class CatalogService:
     async def active_plans(self) -> list[ProductPlan]:
         result = await self.session.execute(
             select(ProductPlan).where(ProductPlan.is_active.is_(True)).order_by(ProductPlan.id)
+        )
+        return list(result.scalars())
+
+    async def templates_for_panel(self, panel_id: int) -> list[PanelTemplate]:
+        result = await self.session.execute(
+            select(PanelTemplate).where(PanelTemplate.panel_id == panel_id).order_by(PanelTemplate.id)
         )
         return list(result.scalars())
 
@@ -55,6 +61,24 @@ class CatalogService:
         await self.session.flush()
         return plan
 
+    async def add_template(
+        self,
+        panel_id: int,
+        name: str,
+        group_ids: list[int],
+        subscription_client_type: str,
+    ) -> PanelTemplate:
+        template = PanelTemplate(
+            panel_id=panel_id,
+            name=name,
+            group_ids=group_ids,
+            subscription_client_type=subscription_client_type or "v2ray",
+            is_active=True,
+        )
+        self.session.add(template)
+        await self.session.flush()
+        return template
+
     async def client_for_panel(self, panel_id: int | None) -> PasarGuardClient:
         if panel_id is None:
             return PasarGuardClient()
@@ -68,4 +92,3 @@ class CatalogService:
             group_ids=panel.group_ids or [],
             subscription_client_type=panel.subscription_client_type,
         )
-

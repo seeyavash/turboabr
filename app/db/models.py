@@ -88,6 +88,19 @@ class ProductPlan(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class PanelTemplate(Base):
+    __tablename__ = "panel_templates"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    panel_id: Mapped[int] = mapped_column(ForeignKey("pasarguard_panels.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    group_ids: Mapped[list[int]] = mapped_column(JSONB, default=list)
+    subscription_client_type: Mapped[str] = mapped_column(String(64), default="v2ray")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Setting(Base):
     __tablename__ = "settings"
 

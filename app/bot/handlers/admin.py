@@ -13,13 +13,14 @@ from app.bot.keyboards.admin import (
     admin_user_actions,
     admins_menu,
     panel_actions,
+    panels_list_keyboard,
     panels_menu,
     payment_settings_menu,
     plan_actions,
     store_menu,
     user_services_menu,
 )
-from app.db.models import PasarGuardPanel, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, User, VpnService
+from app.db.models import PanelTemplate, PasarGuardPanel, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, User, VpnService
 from app.services.catalog import CatalogService
 from app.services.payments import PaymentService
 from app.services.services import VpnServiceManager
@@ -39,8 +40,13 @@ def status_label(status: str) -> str:
 
 class AdminState(StatesGroup):
     set_value = State()
-    add_panel = State()
-    edit_panel = State()
+    panel_name = State()
+    panel_url = State()
+    panel_username = State()
+    panel_password = State()
+    template_name = State()
+    template_groups = State()
+    template_client_type = State()
     add_plan = State()
     edit_plan = State()
     add_admin = State()
@@ -51,6 +57,101 @@ class AdminState(StatesGroup):
 
 async def is_admin(session: AsyncSession, telegram_id: int) -> bool:
     return telegram_id in await SettingsService(session).admin_ids()
+
+
+async def replace_message(callback: CallbackQuery, text: str, reply_markup=None) -> None:
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except Exception:
+        await callback.message.answer(text, reply_markup=reply_markup)
+
+
+async def send_step_prompt(message: Message, state: FSMContext, text: str) -> None:
+    data = await state.get_data()
+    prompt_id = data.get("prompt_message_id")
+    if prompt_id:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_id)
+        except Exception:
+            pass
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    sent = await message.answer(text)
+    await state.update_data(prompt_message_id=sent.message_id)
+
+
+async def cleanup_step_prompt(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    prompt_id = data.get("prompt_message_id")
+    if prompt_id:
+        try:
+            await message.bot.delete_message(message.chat.id, prompt_id)
+        except Exception:
+            pass
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+async def show_panels(message: Message, session: AsyncSession) -> None:
+    result = await session.execute(select(PasarGuardPanel).order_by(PasarGuardPanel.id))
+    panels = list(result.scalars())
+    if not panels:
+        await message.answer("هنوز هیچ پنل PasarGuard ثبت نشده است.", reply_markup=panels_menu())
+        return
+    await message.answer("لیست پنل‌ها:", reply_markup=panels_list_keyboard(panels))
+
+
+async def replace_with_panels(callback: CallbackQuery, session: AsyncSession) -> None:
+    result = await session.execute(select(PasarGuardPanel).order_by(PasarGuardPanel.id))
+    panels = list(result.scalars())
+    if not panels:
+        await replace_message(callback, "هنوز هیچ پنل PasarGuard ثبت نشده است.", reply_markup=panels_menu())
+        return
+    await replace_message(callback, "لیست پنل‌ها:", reply_markup=panels_list_keyboard(panels))
+
+
+async def show_panel_detail(message: Message, session: AsyncSession, panel_id: int) -> None:
+    panel = await session.get(PasarGuardPanel, panel_id)
+    if not panel:
+        await message.answer("پنل پیدا نشد.", reply_markup=panels_menu())
+        return
+    templates = await CatalogService(session).templates_for_panel(panel.id)
+    template_count = len(templates)
+    await message.answer(
+        f"پنل #{panel.id}\n"
+        f"نام: {panel.name}\n"
+        f"آدرس: {panel.base_url}\n"
+        f"نام کاربری: {panel.username}\n"
+        f"گروه پیش‌فرض: {','.join(str(item) for item in (panel.group_ids or [])) or '-'}\n"
+        f"نوع کلاینت پیش‌فرض: {panel.subscription_client_type}\n"
+        f"تعداد تمپلیت‌ها: {template_count}\n"
+        f"فعال: {'بله' if panel.is_active else 'خیر'}",
+        reply_markup=panel_actions(panel.id, panel.is_active),
+    )
+
+
+async def replace_with_panel_detail(callback: CallbackQuery, session: AsyncSession, panel_id: int) -> None:
+    panel = await session.get(PasarGuardPanel, panel_id)
+    if not panel:
+        await replace_message(callback, "پنل پیدا نشد.", reply_markup=panels_menu())
+        return
+    templates = await CatalogService(session).templates_for_panel(panel.id)
+    await replace_message(
+        callback,
+        f"پنل #{panel.id}\n"
+        f"نام: {panel.name}\n"
+        f"آدرس: {panel.base_url}\n"
+        f"نام کاربری: {panel.username}\n"
+        f"گروه پیش‌فرض: {','.join(str(item) for item in (panel.group_ids or [])) or '-'}\n"
+        f"نوع کلاینت پیش‌فرض: {panel.subscription_client_type}\n"
+        f"تعداد تمپلیت‌ها: {len(templates)}\n"
+        f"فعال: {'بله' if panel.is_active else 'خیر'}",
+        reply_markup=panel_actions(panel.id, panel.is_active),
+    )
 
 
 @router.message(Command("admin"))
@@ -66,7 +167,7 @@ async def admin_menu_callback(callback: CallbackQuery, session: AsyncSession) ->
     if not await is_admin(session, callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await callback.message.answer("پنل مدیریت", reply_markup=admin_menu())
+    await replace_message(callback, "پنل مدیریت", reply_markup=admin_menu())
     await callback.answer()
 
 
@@ -79,7 +180,8 @@ async def dashboard(callback: CallbackQuery, session: AsyncSession) -> None:
     active = await session.scalar(select(func.count(VpnService.id)).where(VpnService.status == ServiceStatus.active.value))
     disabled = await session.scalar(select(func.count(VpnService.id)).where(VpnService.status == ServiceStatus.disabled.value))
     wallet_sum = await session.scalar(select(func.coalesce(func.sum(User.wallet_balance_toman), 0)))
-    await callback.message.answer(
+    await replace_message(
+        callback,
         f"تعداد کاربران: {users}\nسرویس‌های فعال: {active}\nسرویس‌های غیرفعال: {disabled}\nمجموع موجودی کیف پول‌ها: {wallet_sum:,} تومان"
     )
     await callback.answer()
@@ -90,7 +192,7 @@ async def panels_section(callback: CallbackQuery, session: AsyncSession) -> None
     if not await is_admin(session, callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await callback.message.answer("مدیریت پنل‌ها", reply_markup=panels_menu())
+    await replace_message(callback, "مدیریت پنل‌ها", reply_markup=panels_menu())
     await callback.answer()
 
 
@@ -99,7 +201,7 @@ async def store_section(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await callback.message.answer("تنظیمات فروشگاه", reply_markup=store_menu())
+    await replace_message(callback, "تنظیمات فروشگاه", reply_markup=store_menu())
     await callback.answer()
 
 
@@ -108,7 +210,7 @@ async def admins_section(callback: CallbackQuery, session: AsyncSession) -> None
     if not await is_admin(session, callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await callback.message.answer("تنظیمات ادمین‌ها", reply_markup=admins_menu())
+    await replace_message(callback, "تنظیمات ادمین‌ها", reply_markup=admins_menu())
     await callback.answer()
 
 
@@ -141,7 +243,7 @@ async def payment_settings_section(callback: CallbackQuery, session: AsyncSessio
         "stars_to_toman_rate": "نرخ هر استار",
     }
     lines = [f"{labels[key]}: {values.get(key)}" for key in wanted]
-    await callback.message.answer("\n".join(lines), reply_markup=payment_settings_menu())
+    await replace_message(callback, "\n".join(lines), reply_markup=payment_settings_menu())
     await callback.answer()
 
 
@@ -150,7 +252,7 @@ async def user_services_section(callback: CallbackQuery, session: AsyncSession) 
     if not await is_admin(session, callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await callback.message.answer("خدمات کاربر", reply_markup=user_services_menu())
+    await replace_message(callback, "خدمات کاربر", reply_markup=user_services_menu())
     await callback.answer()
 
 
@@ -159,36 +261,11 @@ async def add_panel_start(callback: CallbackQuery, state: FSMContext, session: A
     if not await is_admin(session, callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await state.set_state(AdminState.add_panel)
-    await callback.message.answer(
-        "اطلاعات پنل را با این فرمت ارسال کنید:\n"
-        "نام | آدرس پنل | نام کاربری | رمز عبور | شناسه گروه‌ها | نوع کلاینت\n"
-        "نمونه:\n"
-        "Main | https://panel.example.com | admin | pass | 1,2 | v2ray"
-    )
-    await callback.answer()
-
-
-@router.message(AdminState.add_panel)
-async def add_panel_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    if not await is_admin(session, message.from_user.id):
-        await message.answer("دسترسی ندارید.")
-        return
-    parts = [part.strip() for part in (message.text or "").split("|")]
-    if len(parts) != 6:
-        await message.answer("فرمت درست: نام | آدرس پنل | نام کاربری | رمز عبور | شناسه گروه‌ها | نوع کلاینت")
-        return
-    group_ids = [int(item.strip()) for item in parts[4].split(",") if item.strip()]
-    panel = await CatalogService(session).add_panel(
-        name=parts[0],
-        base_url=parts[1],
-        username=parts[2],
-        password=parts[3],
-        group_ids=group_ids,
-        subscription_client_type=parts[5] or "v2ray",
-    )
     await state.clear()
-    await message.answer(f"پنل اضافه شد: #{panel.id} {panel.name}")
+    await state.update_data(panel_mode="add", prompt_message_id=callback.message.message_id)
+    await state.set_state(AdminState.panel_name)
+    await replace_message(callback, "نام پنل را وارد کنید:")
+    await callback.answer()
 
 
 @router.callback_query(F.data == "admin_panel:list")
@@ -196,22 +273,16 @@ async def panels_list(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    result = await session.execute(select(PasarGuardPanel).order_by(PasarGuardPanel.id))
-    panels = list(result.scalars())
-    if not panels:
-        await callback.message.answer("هنوز هیچ پنل PasarGuard ثبت نشده است.")
-    else:
-        for panel in panels:
-            await callback.message.answer(
-                f"پنل #{panel.id}\n"
-                f"نام: {panel.name}\n"
-                f"آدرس: {panel.base_url}\n"
-                f"نام کاربری: {panel.username}\n"
-                f"گروه‌ها: {','.join(str(item) for item in (panel.group_ids or [])) or '-'}\n"
-                f"نوع کلاینت: {panel.subscription_client_type}\n"
-                f"فعال: {'بله' if panel.is_active else 'خیر'}",
-                reply_markup=panel_actions(panel.id, panel.is_active),
-            )
+    await replace_with_panels(callback, session)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_panel_view:"))
+async def panel_view(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    await replace_with_panel_detail(callback, session, int(callback.data.split(":", 1)[1]))
     await callback.answer()
 
 
@@ -224,47 +295,222 @@ async def edit_panel_start(callback: CallbackQuery, state: FSMContext, session: 
     if not panel:
         await callback.answer("پنل پیدا نشد.", show_alert=True)
         return
-    await state.update_data(panel_id=panel.id)
-    await state.set_state(AdminState.edit_panel)
-    await callback.message.answer(
-        "اطلاعات فعلی پنل:\n"
-        f"نام: {panel.name}\n"
-        f"آدرس: {panel.base_url}\n"
-        f"نام کاربری: {panel.username}\n"
-        f"گروه‌ها: {','.join(str(item) for item in (panel.group_ids or []))}\n"
-        f"نوع کلاینت: {panel.subscription_client_type}\n\n"
-        "اطلاعات جدید را ارسال کنید:\n"
-        "نام | آدرس پنل | نام کاربری | رمز جدید یا - | شناسه گروه‌ها | نوع کلاینت\n"
-        "برای حفظ رمز قبلی، در بخش رمز فقط - بفرستید."
+    await state.clear()
+    await state.update_data(
+        panel_mode="edit",
+        panel_id=panel.id,
+        prompt_message_id=callback.message.message_id,
     )
+    await state.set_state(AdminState.panel_name)
+    await replace_message(callback, f"نام پنل را وارد کنید:\nمقدار فعلی: {panel.name}\nبرای حفظ مقدار فعلی `-` بفرستید.")
     await callback.answer()
 
 
-@router.message(AdminState.edit_panel)
-async def edit_panel_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
+@router.message(AdminState.panel_name)
+async def panel_name_step(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
         await message.answer("دسترسی ندارید.")
         return
-    panel = await session.get(PasarGuardPanel, (await state.get_data())["panel_id"])
-    if not panel:
-        await message.answer("پنل پیدا نشد.")
-        await state.clear()
+    value = (message.text or "").strip()
+    data = await state.get_data()
+    if data.get("panel_mode") == "edit" and value == "-":
+        panel = await session.get(PasarGuardPanel, data["panel_id"])
+        value = panel.name if panel else ""
+    if not value:
+        await send_step_prompt(message, state, "نام پنل نمی‌تواند خالی باشد. دوباره نام پنل را وارد کنید:")
         return
-    parts = [part.strip() for part in (message.text or "").split("|")]
-    if len(parts) != 6:
-        await message.answer("فرمت درست: نام | آدرس پنل | نام کاربری | رمز جدید یا - | شناسه گروه‌ها | نوع کلاینت")
+    await state.update_data(panel_name=value)
+    await state.set_state(AdminState.panel_url)
+    current = ""
+    if data.get("panel_mode") == "edit":
+        panel = await session.get(PasarGuardPanel, data["panel_id"])
+        current = f"\nمقدار فعلی: {panel.base_url}\nبرای حفظ مقدار فعلی `-` بفرستید." if panel else ""
+    await send_step_prompt(message, state, f"آدرس پنل را وارد کنید:{current}")
+
+
+@router.message(AdminState.panel_url)
+async def panel_url_step(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    value = (message.text or "").strip().rstrip("/")
+    data = await state.get_data()
+    if data.get("panel_mode") == "edit" and value == "-":
+        panel = await session.get(PasarGuardPanel, data["panel_id"])
+        value = panel.base_url if panel else ""
+    if not value.startswith(("http://", "https://")):
+        await send_step_prompt(message, state, "آدرس پنل باید با http:// یا https:// شروع شود. دوباره وارد کنید:")
+        return
+    await state.update_data(panel_url=value)
+    await state.set_state(AdminState.panel_username)
+    current = ""
+    if data.get("panel_mode") == "edit":
+        panel = await session.get(PasarGuardPanel, data["panel_id"])
+        current = f"\nمقدار فعلی: {panel.username}\nبرای حفظ مقدار فعلی `-` بفرستید." if panel else ""
+    await send_step_prompt(message, state, f"نام کاربری پنل را وارد کنید:{current}")
+
+
+@router.message(AdminState.panel_username)
+async def panel_username_step(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    value = (message.text or "").strip()
+    data = await state.get_data()
+    if data.get("panel_mode") == "edit" and value == "-":
+        panel = await session.get(PasarGuardPanel, data["panel_id"])
+        value = panel.username if panel else ""
+    if not value:
+        await send_step_prompt(message, state, "نام کاربری نمی‌تواند خالی باشد. دوباره وارد کنید:")
+        return
+    await state.update_data(panel_username=value)
+    await state.set_state(AdminState.panel_password)
+    suffix = "\nبرای حفظ رمز فعلی `-` بفرستید." if data.get("panel_mode") == "edit" else ""
+    await send_step_prompt(message, state, f"رمز عبور پنل را وارد کنید:{suffix}")
+
+
+@router.message(AdminState.panel_password)
+async def panel_password_step(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
         return
     from app.core.security import encrypt_secret
 
-    panel.name = parts[0]
-    panel.base_url = parts[1].rstrip("/")
-    panel.username = parts[2]
-    if parts[3] != "-":
-        panel.password_secret = encrypt_secret(parts[3]) or ""
-    panel.group_ids = [int(item.strip()) for item in parts[4].split(",") if item.strip()]
-    panel.subscription_client_type = parts[5] or "v2ray"
+    password = (message.text or "").strip()
+    data = await state.get_data()
+    try:
+        if data.get("panel_mode") == "edit":
+            panel = await session.get(PasarGuardPanel, data["panel_id"])
+            if not panel:
+                await cleanup_step_prompt(message, state)
+                await state.clear()
+                await message.answer("پنل پیدا نشد.", reply_markup=panels_menu())
+                return
+            panel.name = data["panel_name"]
+            panel.base_url = data["panel_url"]
+            panel.username = data["panel_username"]
+            if password != "-":
+                if not password:
+                    await send_step_prompt(message, state, "رمز عبور نمی‌تواند خالی باشد. دوباره وارد کنید:")
+                    return
+                panel.password_secret = encrypt_secret(password) or ""
+            success_text = "پنل با موفقیت ویرایش شد."
+        else:
+            if not password:
+                await send_step_prompt(message, state, "رمز عبور نمی‌تواند خالی باشد. دوباره وارد کنید:")
+                return
+            panel = await CatalogService(session).add_panel(
+                name=data["panel_name"],
+                base_url=data["panel_url"],
+                username=data["panel_username"],
+                password=password,
+                group_ids=[],
+                subscription_client_type="v2ray",
+            )
+            success_text = "پنل با موفقیت اضافه شد."
+        await cleanup_step_prompt(message, state)
+        await state.clear()
+        await message.answer(success_text)
+        await show_panels(message, session)
+    except Exception as exc:
+        await cleanup_step_prompt(message, state)
+        await state.clear()
+        await message.answer(f"خطا در ذخیره پنل:\n{exc}", reply_markup=panels_menu())
+
+
+@router.callback_query(F.data.startswith("admin_template_add:"))
+async def add_template_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    panel = await session.get(PasarGuardPanel, int(callback.data.split(":", 1)[1]))
+    if not panel:
+        await callback.answer("پنل پیدا نشد.", show_alert=True)
+        return
     await state.clear()
-    await message.answer(f"پنل بروزرسانی شد: #{panel.id} {panel.name}")
+    await state.update_data(template_panel_id=panel.id, prompt_message_id=callback.message.message_id)
+    await state.set_state(AdminState.template_name)
+    await replace_message(callback, f"نام تمپلیت را برای پنل «{panel.name}» وارد کنید:")
+    await callback.answer()
+
+
+@router.message(AdminState.template_name)
+async def template_name_step(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    name = (message.text or "").strip()
+    if not name:
+        await send_step_prompt(message, state, "نام تمپلیت نمی‌تواند خالی باشد. دوباره وارد کنید:")
+        return
+    await state.update_data(template_name=name)
+    await state.set_state(AdminState.template_groups)
+    await send_step_prompt(message, state, "شناسه گروه‌های این تمپلیت را وارد کنید.\nاگر گروه ندارد، `-` بفرستید.\nنمونه: 1,2")
+
+
+@router.message(AdminState.template_groups)
+async def template_groups_step(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    raw = (message.text or "").strip()
+    try:
+        group_ids = [] if raw == "-" else [int(item.strip()) for item in raw.split(",") if item.strip()]
+    except ValueError:
+        await send_step_prompt(message, state, "شناسه گروه‌ها باید عددی باشد. نمونه: 1,2\nاگر گروه ندارد، `-` بفرستید.")
+        return
+    await state.update_data(template_group_ids=group_ids)
+    await state.set_state(AdminState.template_client_type)
+    await send_step_prompt(message, state, "نوع کلاینت تمپلیت را وارد کنید.\nاگر مطمئن نیستید `v2ray` بفرستید:")
+
+
+@router.message(AdminState.template_client_type)
+async def template_client_type_step(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    client_type = (message.text or "").strip() or "v2ray"
+    data = await state.get_data()
+    try:
+        template = await CatalogService(session).add_template(
+            panel_id=data["template_panel_id"],
+            name=data["template_name"],
+            group_ids=data["template_group_ids"],
+            subscription_client_type=client_type,
+        )
+        await cleanup_step_prompt(message, state)
+        await state.clear()
+        await message.answer(f"تمپلیت با موفقیت اضافه شد: #{template.id} {template.name}")
+        await show_panel_detail(message, session, template.panel_id)
+    except Exception as exc:
+        await cleanup_step_prompt(message, state)
+        await state.clear()
+        await message.answer(f"خطا در ذخیره تمپلیت:\n{exc}", reply_markup=panels_menu())
+
+
+@router.callback_query(F.data.startswith("admin_template_list:"))
+async def template_list(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    panel_id = int(callback.data.split(":", 1)[1])
+    panel = await session.get(PasarGuardPanel, panel_id)
+    if not panel:
+        await replace_message(callback, "پنل پیدا نشد.", reply_markup=panels_menu())
+        await callback.answer()
+        return
+    templates = await CatalogService(session).templates_for_panel(panel_id)
+    if not templates:
+        await replace_message(callback, "برای این پنل هنوز تمپلیتی ثبت نشده است.", reply_markup=panel_actions(panel_id, panel.is_active))
+        await callback.answer()
+        return
+    lines = ["تمپلیت‌های این پنل:"]
+    for template in templates:
+        lines.append(
+            f"#{template.id} | {template.name} | گروه‌ها: {','.join(str(item) for item in template.group_ids) or '-'} | کلاینت: {template.subscription_client_type}"
+        )
+    await replace_message(callback, "\n".join(lines), reply_markup=panel_actions(panel_id, panel.is_active))
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("admin_panel_enable:"))
@@ -275,6 +521,7 @@ async def enable_panel(callback: CallbackQuery, session: AsyncSession) -> None:
     panel = await session.get(PasarGuardPanel, int(callback.data.split(":", 1)[1]))
     if panel:
         panel.is_active = True
+        await replace_with_panel_detail(callback, session, panel.id)
     await callback.answer("پنل فعال شد.")
 
 
@@ -286,6 +533,7 @@ async def disable_panel(callback: CallbackQuery, session: AsyncSession) -> None:
     panel = await session.get(PasarGuardPanel, int(callback.data.split(":", 1)[1]))
     if panel:
         panel.is_active = False
+        await replace_with_panel_detail(callback, session, panel.id)
     await callback.answer("پنل غیرفعال شد.")
 
 
@@ -300,9 +548,11 @@ async def delete_panel(callback: CallbackQuery, session: AsyncSession) -> None:
         service_count = await session.scalar(select(func.count(VpnService.id)).where(VpnService.panel_id == panel.id))
         if plan_count or service_count:
             panel.is_active = False
+            await replace_with_panel_detail(callback, session, panel.id)
             await callback.answer("این پنل تعرفه یا سرویس دارد؛ به جای حذف، غیرفعال شد.", show_alert=True)
             return
         await session.delete(panel)
+    await replace_with_panels(callback, session)
     await callback.answer("پنل حذف شد.")
 
 
