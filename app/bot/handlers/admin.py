@@ -29,6 +29,14 @@ from app.services.wallet import WalletService
 router = Router()
 
 
+def status_label(status: str) -> str:
+    return {
+        ServiceStatus.active.value: "فعال",
+        ServiceStatus.disabled.value: "غیرفعال",
+        ServiceStatus.deleted.value: "حذف‌شده",
+    }.get(status, status)
+
+
 class AdminState(StatesGroup):
     set_value = State()
     add_panel = State()
@@ -48,31 +56,31 @@ async def is_admin(session: AsyncSession, telegram_id: int) -> bool:
 @router.message(Command("admin"))
 async def admin(message: Message, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("شما به پنل مدیریت دسترسی ندارید.")
         return
-    await message.answer("Admin panel", reply_markup=admin_menu())
+    await message.answer("پنل مدیریت", reply_markup=admin_menu())
 
 
 @router.callback_query(F.data == "admin:menu")
 async def admin_menu_callback(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await callback.message.answer("Admin panel", reply_markup=admin_menu())
+    await callback.message.answer("پنل مدیریت", reply_markup=admin_menu())
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin:dashboard")
 async def dashboard(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     users = await session.scalar(select(func.count(User.id)))
     active = await session.scalar(select(func.count(VpnService.id)).where(VpnService.status == ServiceStatus.active.value))
     disabled = await session.scalar(select(func.count(VpnService.id)).where(VpnService.status == ServiceStatus.disabled.value))
     wallet_sum = await session.scalar(select(func.coalesce(func.sum(User.wallet_balance_toman), 0)))
     await callback.message.answer(
-        f"Users: {users}\nActive services: {active}\nDisabled services: {disabled}\nWallet total: {wallet_sum:,} Toman"
+        f"تعداد کاربران: {users}\nسرویس‌های فعال: {active}\nسرویس‌های غیرفعال: {disabled}\nمجموع موجودی کیف پول‌ها: {wallet_sum:,} تومان"
     )
     await callback.answer()
 
@@ -80,34 +88,34 @@ async def dashboard(callback: CallbackQuery, session: AsyncSession) -> None:
 @router.callback_query(F.data == "admin:panels")
 async def panels_section(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await callback.message.answer("Modiriate panelha", reply_markup=panels_menu())
+    await callback.message.answer("مدیریت پنل‌ها", reply_markup=panels_menu())
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin:store")
 async def store_section(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await callback.message.answer("Tanzimat foroshgah", reply_markup=store_menu())
+    await callback.message.answer("تنظیمات فروشگاه", reply_markup=store_menu())
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin:admins")
 async def admins_section(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await callback.message.answer("Tanzimat adminha", reply_markup=admins_menu())
+    await callback.message.answer("تنظیمات ادمین‌ها", reply_markup=admins_menu())
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin:payment_settings")
 async def payment_settings_section(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     values = await SettingsService(session).all_public()
     wanted = [
@@ -121,7 +129,18 @@ async def payment_settings_section(callback: CallbackQuery, session: AsyncSessio
         "nowpayments_api_token",
         "stars_to_toman_rate",
     ]
-    lines = [f"{key}: {values.get(key)}" for key in wanted]
+    labels = {
+        "card_number": "شماره کارت",
+        "card_holder": "نام صاحب کارت",
+        "payment_card_enabled": "وضعیت کارت به کارت",
+        "payment_plisio_enabled": "وضعیت Plisio",
+        "payment_nowpayments_enabled": "وضعیت NOWPayments",
+        "payment_stars_enabled": "وضعیت استارز",
+        "plisio_api_token": "توکن Plisio",
+        "nowpayments_api_token": "توکن NOWPayments",
+        "stars_to_toman_rate": "نرخ هر استار",
+    }
+    lines = [f"{labels[key]}: {values.get(key)}" for key in wanted]
     await callback.message.answer("\n".join(lines), reply_markup=payment_settings_menu())
     await callback.answer()
 
@@ -129,22 +148,22 @@ async def payment_settings_section(callback: CallbackQuery, session: AsyncSessio
 @router.callback_query(F.data == "admin:user_services")
 async def user_services_section(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
-    await callback.message.answer("Khadamate karbar", reply_markup=user_services_menu())
+    await callback.message.answer("خدمات کاربر", reply_markup=user_services_menu())
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin_panel:add")
 async def add_panel_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     await state.set_state(AdminState.add_panel)
     await callback.message.answer(
-        "Send panel data:\n"
-        "name | base_url | username | password | group_ids | client_type\n"
-        "Example:\n"
+        "اطلاعات پنل را با این فرمت ارسال کنید:\n"
+        "نام | آدرس پنل | نام کاربری | رمز عبور | شناسه گروه‌ها | نوع کلاینت\n"
+        "نمونه:\n"
         "Main | https://panel.example.com | admin | pass | 1,2 | v2ray"
     )
     await callback.answer()
@@ -153,11 +172,11 @@ async def add_panel_start(callback: CallbackQuery, state: FSMContext, session: A
 @router.message(AdminState.add_panel)
 async def add_panel_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     parts = [part.strip() for part in (message.text or "").split("|")]
     if len(parts) != 6:
-        await message.answer("Format: name | base_url | username | password | group_ids | client_type")
+        await message.answer("فرمت درست: نام | آدرس پنل | نام کاربری | رمز عبور | شناسه گروه‌ها | نوع کلاینت")
         return
     group_ids = [int(item.strip()) for item in parts[4].split(",") if item.strip()]
     panel = await CatalogService(session).add_panel(
@@ -169,28 +188,28 @@ async def add_panel_save(message: Message, state: FSMContext, session: AsyncSess
         subscription_client_type=parts[5] or "v2ray",
     )
     await state.clear()
-    await message.answer(f"Panel added: #{panel.id} {panel.name}")
+    await message.answer(f"پنل اضافه شد: #{panel.id} {panel.name}")
 
 
 @router.callback_query(F.data == "admin_panel:list")
 async def panels_list(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     result = await session.execute(select(PasarGuardPanel).order_by(PasarGuardPanel.id))
     panels = list(result.scalars())
     if not panels:
-        await callback.message.answer("No PasarGuard panels yet.")
+        await callback.message.answer("هنوز هیچ پنل PasarGuard ثبت نشده است.")
     else:
         for panel in panels:
             await callback.message.answer(
-                f"Panel #{panel.id}\n"
-                f"Name: {panel.name}\n"
-                f"URL: {panel.base_url}\n"
-                f"Username: {panel.username}\n"
-                f"Groups: {','.join(str(item) for item in (panel.group_ids or [])) or '-'}\n"
-                f"Client type: {panel.subscription_client_type}\n"
-                f"Active: {panel.is_active}",
+                f"پنل #{panel.id}\n"
+                f"نام: {panel.name}\n"
+                f"آدرس: {panel.base_url}\n"
+                f"نام کاربری: {panel.username}\n"
+                f"گروه‌ها: {','.join(str(item) for item in (panel.group_ids or [])) or '-'}\n"
+                f"نوع کلاینت: {panel.subscription_client_type}\n"
+                f"فعال: {'بله' if panel.is_active else 'خیر'}",
                 reply_markup=panel_actions(panel.id, panel.is_active),
             )
     await callback.answer()
@@ -199,24 +218,24 @@ async def panels_list(callback: CallbackQuery, session: AsyncSession) -> None:
 @router.callback_query(F.data.startswith("admin_panel_edit:"))
 async def edit_panel_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     panel = await session.get(PasarGuardPanel, int(callback.data.split(":", 1)[1]))
     if not panel:
-        await callback.answer("Panel not found", show_alert=True)
+        await callback.answer("پنل پیدا نشد.", show_alert=True)
         return
     await state.update_data(panel_id=panel.id)
     await state.set_state(AdminState.edit_panel)
     await callback.message.answer(
-        "Current panel:\n"
-        f"name: {panel.name}\n"
-        f"base_url: {panel.base_url}\n"
-        f"username: {panel.username}\n"
-        f"group_ids: {','.join(str(item) for item in (panel.group_ids or []))}\n"
-        f"client_type: {panel.subscription_client_type}\n\n"
-        "Send new data:\n"
-        "name | base_url | username | password_or_- | group_ids | client_type\n"
-        "Use - for password to keep old password."
+        "اطلاعات فعلی پنل:\n"
+        f"نام: {panel.name}\n"
+        f"آدرس: {panel.base_url}\n"
+        f"نام کاربری: {panel.username}\n"
+        f"گروه‌ها: {','.join(str(item) for item in (panel.group_ids or []))}\n"
+        f"نوع کلاینت: {panel.subscription_client_type}\n\n"
+        "اطلاعات جدید را ارسال کنید:\n"
+        "نام | آدرس پنل | نام کاربری | رمز جدید یا - | شناسه گروه‌ها | نوع کلاینت\n"
+        "برای حفظ رمز قبلی، در بخش رمز فقط - بفرستید."
     )
     await callback.answer()
 
@@ -224,16 +243,16 @@ async def edit_panel_start(callback: CallbackQuery, state: FSMContext, session: 
 @router.message(AdminState.edit_panel)
 async def edit_panel_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     panel = await session.get(PasarGuardPanel, (await state.get_data())["panel_id"])
     if not panel:
-        await message.answer("Panel not found.")
+        await message.answer("پنل پیدا نشد.")
         await state.clear()
         return
     parts = [part.strip() for part in (message.text or "").split("|")]
     if len(parts) != 6:
-        await message.answer("Format: name | base_url | username | password_or_- | group_ids | client_type")
+        await message.answer("فرمت درست: نام | آدرس پنل | نام کاربری | رمز جدید یا - | شناسه گروه‌ها | نوع کلاینت")
         return
     from app.core.security import encrypt_secret
 
@@ -245,35 +264,35 @@ async def edit_panel_save(message: Message, state: FSMContext, session: AsyncSes
     panel.group_ids = [int(item.strip()) for item in parts[4].split(",") if item.strip()]
     panel.subscription_client_type = parts[5] or "v2ray"
     await state.clear()
-    await message.answer(f"Panel updated: #{panel.id} {panel.name}")
+    await message.answer(f"پنل بروزرسانی شد: #{panel.id} {panel.name}")
 
 
 @router.callback_query(F.data.startswith("admin_panel_enable:"))
 async def enable_panel(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     panel = await session.get(PasarGuardPanel, int(callback.data.split(":", 1)[1]))
     if panel:
         panel.is_active = True
-    await callback.answer("Panel enabled")
+    await callback.answer("پنل فعال شد.")
 
 
 @router.callback_query(F.data.startswith("admin_panel_disable:"))
 async def disable_panel(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     panel = await session.get(PasarGuardPanel, int(callback.data.split(":", 1)[1]))
     if panel:
         panel.is_active = False
-    await callback.answer("Panel disabled")
+    await callback.answer("پنل غیرفعال شد.")
 
 
 @router.callback_query(F.data.startswith("admin_panel_delete:"))
 async def delete_panel(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     panel = await session.get(PasarGuardPanel, int(callback.data.split(":", 1)[1]))
     if panel:
@@ -281,22 +300,22 @@ async def delete_panel(callback: CallbackQuery, session: AsyncSession) -> None:
         service_count = await session.scalar(select(func.count(VpnService.id)).where(VpnService.panel_id == panel.id))
         if plan_count or service_count:
             panel.is_active = False
-            await callback.answer("Panel has plans/services, disabled instead", show_alert=True)
+            await callback.answer("این پنل تعرفه یا سرویس دارد؛ به جای حذف، غیرفعال شد.", show_alert=True)
             return
         await session.delete(panel)
-    await callback.answer("Panel deleted")
+    await callback.answer("پنل حذف شد.")
 
 
 @router.callback_query(F.data == "admin_plan:add")
 async def add_plan_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     await state.set_state(AdminState.add_plan)
     await callback.message.answer(
-        "Send tariff data:\n"
-        "name | price_per_gb_toman | panel_id(optional)\n"
-        "Example:\n"
+        "اطلاعات تعرفه را با این فرمت ارسال کنید:\n"
+        "نام تعرفه | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)\n"
+        "نمونه:\n"
         "Multi Hoshmand | 9000 | 1"
     )
     await callback.answer()
@@ -305,38 +324,38 @@ async def add_plan_start(callback: CallbackQuery, state: FSMContext, session: As
 @router.message(AdminState.add_plan)
 async def add_plan_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     parts = [part.strip() for part in (message.text or "").split("|")]
     if len(parts) not in {2, 3}:
-        await message.answer("Format: name | price_per_gb_toman | panel_id(optional)")
+        await message.answer("فرمت درست: نام تعرفه | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)")
         return
     panel_id = int(parts[2]) if len(parts) == 3 and parts[2] else None
     if panel_id and not await session.get(PasarGuardPanel, panel_id):
-        await message.answer("Panel not found.")
+        await message.answer("پنل پیدا نشد.")
         return
     plan = await CatalogService(session).add_plan(parts[0], int(parts[1]), panel_id)
     await state.clear()
-    await message.answer(f"Tariff added: #{plan.id} {plan.name} - {plan.price_per_gb_toman:,} Toman/GB")
+    await message.answer(f"تعرفه اضافه شد: #{plan.id} {plan.name} - {plan.price_per_gb_toman:,} تومان / گیگ")
 
 
 @router.callback_query(F.data == "admin_plan:list")
 async def plans_list(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     result = await session.execute(select(ProductPlan).order_by(ProductPlan.id))
     plans = list(result.scalars())
     if not plans:
-        await callback.message.answer("No tariffs yet. Defaults are still available until custom tariffs are added.")
+        await callback.message.answer("هنوز هیچ تعرفه‌ای ثبت نشده است.")
     else:
         for plan in plans:
             await callback.message.answer(
-                f"Tariff #{plan.id}\n"
-                f"Name: {plan.name}\n"
-                f"Price: {plan.price_per_gb_toman:,} Toman/GB\n"
-                f"Panel: {plan.panel_id or 'env/default'}\n"
-                f"Active: {plan.is_active}",
+                f"تعرفه #{plan.id}\n"
+                f"نام: {plan.name}\n"
+                f"قیمت: {plan.price_per_gb_toman:,} تومان / گیگ\n"
+                f"پنل: {plan.panel_id or 'پیش‌فرض'}\n"
+                f"فعال: {'بله' if plan.is_active else 'خیر'}",
                 reply_markup=plan_actions(plan.id, plan.is_active),
             )
     await callback.answer()
@@ -345,21 +364,21 @@ async def plans_list(callback: CallbackQuery, session: AsyncSession) -> None:
 @router.callback_query(F.data.startswith("admin_plan_edit:"))
 async def edit_plan_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     plan = await session.get(ProductPlan, int(callback.data.split(":", 1)[1]))
     if not plan:
-        await callback.answer("Tariff not found", show_alert=True)
+        await callback.answer("تعرفه پیدا نشد.", show_alert=True)
         return
     await state.update_data(plan_id=plan.id)
     await state.set_state(AdminState.edit_plan)
     await callback.message.answer(
-        "Current tariff:\n"
-        f"name: {plan.name}\n"
-        f"price_per_gb_toman: {plan.price_per_gb_toman}\n"
-        f"panel_id: {plan.panel_id or ''}\n\n"
-        "Send new data:\n"
-        "name | price_per_gb_toman | panel_id(optional)"
+        "اطلاعات فعلی تعرفه:\n"
+        f"نام: {plan.name}\n"
+        f"قیمت هر گیگ: {plan.price_per_gb_toman}\n"
+        f"شناسه پنل: {plan.panel_id or ''}\n\n"
+        "اطلاعات جدید را ارسال کنید:\n"
+        "نام تعرفه | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)"
     )
     await callback.answer()
 
@@ -367,80 +386,80 @@ async def edit_plan_start(callback: CallbackQuery, state: FSMContext, session: A
 @router.message(AdminState.edit_plan)
 async def edit_plan_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     plan = await session.get(ProductPlan, (await state.get_data())["plan_id"])
     if not plan:
-        await message.answer("Tariff not found.")
+        await message.answer("تعرفه پیدا نشد.")
         await state.clear()
         return
     parts = [part.strip() for part in (message.text or "").split("|")]
     if len(parts) not in {2, 3}:
-        await message.answer("Format: name | price_per_gb_toman | panel_id(optional)")
+        await message.answer("فرمت درست: نام تعرفه | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)")
         return
     panel_id = int(parts[2]) if len(parts) == 3 and parts[2] else None
     if panel_id and not await session.get(PasarGuardPanel, panel_id):
-        await message.answer("Panel not found.")
+        await message.answer("پنل پیدا نشد.")
         return
     plan.name = parts[0]
     plan.price_per_gb_toman = int(parts[1])
     plan.panel_id = panel_id
     await state.clear()
-    await message.answer(f"Tariff updated: #{plan.id} {plan.name}")
+    await message.answer(f"تعرفه بروزرسانی شد: #{plan.id} {plan.name}")
 
 
 @router.callback_query(F.data.startswith("admin_plan_enable:"))
 async def enable_plan(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     plan = await session.get(ProductPlan, int(callback.data.split(":", 1)[1]))
     if plan:
         plan.is_active = True
-    await callback.answer("Tariff enabled")
+    await callback.answer("تعرفه فعال شد.")
 
 
 @router.callback_query(F.data.startswith("admin_plan_disable:"))
 async def disable_plan(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     plan = await session.get(ProductPlan, int(callback.data.split(":", 1)[1]))
     if plan:
         plan.is_active = False
-    await callback.answer("Tariff disabled")
+    await callback.answer("تعرفه غیرفعال شد.")
 
 
 @router.callback_query(F.data.startswith("admin_plan_delete:"))
 async def delete_plan(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     plan = await session.get(ProductPlan, int(callback.data.split(":", 1)[1]))
     if plan:
         service_count = await session.scalar(select(func.count(VpnService.id)).where(VpnService.plan_id == plan.id))
         if service_count:
             plan.is_active = False
-            await callback.answer("Tariff has services, disabled instead", show_alert=True)
+            await callback.answer("این تعرفه سرویس دارد؛ به جای حذف، غیرفعال شد.", show_alert=True)
             return
         await session.delete(plan)
-    await callback.answer("Tariff deleted")
+    await callback.answer("تعرفه حذف شد.")
 
 
 @router.callback_query(F.data == "admin_admin:add")
 async def add_admin_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     await state.set_state(AdminState.add_admin)
-    await callback.message.answer("Send numeric Telegram ID to add as admin:")
+    await callback.message.answer("آیدی عددی تلگرام ادمین جدید را ارسال کنید:")
     await callback.answer()
 
 
 @router.message(AdminState.add_admin)
 async def add_admin_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     new_admin_id = int((message.text or "").strip())
     settings = SettingsService(session)
@@ -448,69 +467,69 @@ async def add_admin_save(message: Message, state: FSMContext, session: AsyncSess
     ids.add(new_admin_id)
     await settings.set("admin_ids", ",".join(str(item) for item in sorted(ids)))
     await state.clear()
-    await message.answer(f"Admin added: {new_admin_id}")
+    await message.answer(f"ادمین اضافه شد: {new_admin_id}")
 
 
 @router.callback_query(F.data == "admin_admin:list")
 async def admins_list(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     ids = await SettingsService(session).admin_ids()
     if not ids:
-        await callback.message.answer("No admins configured.")
+        await callback.message.answer("هیچ ادمینی ثبت نشده است.")
     for admin_id in sorted(ids):
-        await callback.message.answer(f"Admin ID: {admin_id}", reply_markup=admin_id_actions(admin_id))
+        await callback.message.answer(f"آیدی ادمین: {admin_id}", reply_markup=admin_id_actions(admin_id))
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("admin_admin_remove:"))
 async def remove_admin(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     admin_id = int(callback.data.split(":", 1)[1])
     if admin_id == callback.from_user.id:
-        await callback.answer("You cannot remove yourself here", show_alert=True)
+        await callback.answer("نمی‌توانید خودتان را از این بخش حذف کنید.", show_alert=True)
         return
     settings = SettingsService(session)
     configured = await settings.get("admin_ids", "")
     ids = {int(item.strip()) for item in (configured or "").split(",") if item.strip()}
     if admin_id not in ids:
-        await callback.answer("This admin comes from ENV or is not removable here", show_alert=True)
+        await callback.answer("این ادمین از ENV آمده یا از این بخش قابل حذف نیست.", show_alert=True)
         return
     ids.remove(admin_id)
     await settings.set("admin_ids", ",".join(str(item) for item in sorted(ids)))
-    await callback.answer("Admin removed")
+    await callback.answer("ادمین حذف شد.")
 
 
 @router.callback_query(F.data == "admin_user:lookup")
 async def user_lookup_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     await state.set_state(AdminState.user_lookup)
-    await callback.message.answer("Send numeric Telegram ID:")
+    await callback.message.answer("آیدی عددی تلگرام کاربر را ارسال کنید:")
     await callback.answer()
 
 
 async def send_admin_user_info(message: Message, session: AsyncSession, telegram_id: int) -> None:
     user = (await session.execute(select(User).where(User.telegram_id == telegram_id))).scalar_one_or_none()
     if not user:
-        await message.answer("User not found.")
+        await message.answer("کاربر پیدا نشد.")
         return
     result = await session.execute(select(VpnService).where(VpnService.user_id == user.id))
     services = list(result.scalars())
     active_count = len([service for service in services if service.status == ServiceStatus.active.value])
     disabled_count = len([service for service in services if service.status == ServiceStatus.disabled.value])
     await message.answer(
-        f"User {user.telegram_id}\n"
-        f"Name: {user.full_name or '-'}\n"
-        f"Username: @{user.username or '-'}\n"
-        f"Wallet: {user.wallet_balance_toman:,} Toman\n"
-        f"Services: {len(services)} total, {active_count} active, {disabled_count} disabled\n"
-        f"Test used: {user.has_test_account}\n"
-        f"Blocked: {user.is_blocked}",
+        f"کاربر: {user.telegram_id}\n"
+        f"نام: {user.full_name or '-'}\n"
+        f"یوزرنیم: @{user.username or '-'}\n"
+        f"موجودی: {user.wallet_balance_toman:,} تومان\n"
+        f"سرویس‌ها: {len(services)} کل، {active_count} فعال، {disabled_count} غیرفعال\n"
+        f"اکانت تست گرفته: {'بله' if user.has_test_account else 'خیر'}\n"
+        f"مسدود: {'بله' if user.is_blocked else 'خیر'}",
         reply_markup=admin_user_actions(user.id, user.is_blocked),
     )
 
@@ -518,7 +537,7 @@ async def send_admin_user_info(message: Message, session: AsyncSession, telegram
 @router.message(AdminState.user_lookup)
 async def user_lookup_state(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     await send_admin_user_info(message, session, int((message.text or "").strip()))
     await state.clear()
@@ -527,25 +546,25 @@ async def user_lookup_state(message: Message, state: FSMContext, session: AsyncS
 @router.callback_query(F.data == "admin:users")
 async def users_list(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     result = await session.execute(select(User).order_by(User.created_at.desc()).limit(20))
     users = list(result.scalars())
     if not users:
-        await callback.message.answer("No users yet.")
+        await callback.message.answer("هنوز کاربری ثبت نشده است.")
     else:
         lines = [
-            f"{user.telegram_id} | {user.full_name or '-'} | {user.wallet_balance_toman:,} Toman"
+            f"{user.telegram_id} | {user.full_name or '-'} | {user.wallet_balance_toman:,} تومان"
             for user in users
         ]
-        await callback.message.answer("Latest users:\n" + "\n".join(lines))
+        await callback.message.answer("آخرین کاربران:\n" + "\n".join(lines))
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin:services")
 async def services_list(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     result = await session.execute(
         select(VpnService, User)
@@ -556,14 +575,14 @@ async def services_list(callback: CallbackQuery, session: AsyncSession) -> None:
     )
     rows = list(result.all())
     if not rows:
-        await callback.message.answer("No services yet.")
+        await callback.message.answer("هنوز سرویسی ثبت نشده است.")
     for service, user in rows:
         await callback.message.answer(
-            f"Service #{service.id}\n"
-            f"User: {user.telegram_id}\n"
-            f"Type: {service.type}\n"
-            f"Status: {service.status}\n"
-            f"Billed: {service.total_billed_mb} MB",
+            f"سرویس #{service.id}\n"
+            f"کاربر: {user.telegram_id}\n"
+            f"نوع: {service.type}\n"
+            f"وضعیت: {status_label(service.status)}\n"
+            f"ترافیک محاسبه‌شده: {service.total_billed_mb} مگابایت",
             reply_markup=admin_service_actions(service.id, service.status == ServiceStatus.disabled.value),
         )
     await callback.answer()
@@ -572,19 +591,19 @@ async def services_list(callback: CallbackQuery, session: AsyncSession) -> None:
 @router.callback_query(F.data.startswith("admin_set:"))
 async def admin_set_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     key = callback.data.split(":", 1)[1]
     await state.update_data(setting_key=key)
     await state.set_state(AdminState.set_value)
-    await callback.message.answer(f"Send new value for {key}. For card_info use: card_number | holder")
+    await callback.message.answer(f"مقدار جدید را برای `{key}` ارسال کنید.\nبرای اطلاعات کارت از این فرمت استفاده کنید:\nشماره کارت | نام صاحب کارت")
     await callback.answer()
 
 
 @router.message(AdminState.set_value)
 async def admin_set_value(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     data = await state.get_data()
     key = data["setting_key"]
@@ -592,7 +611,7 @@ async def admin_set_value(message: Message, state: FSMContext, session: AsyncSes
     if key == "card_info":
         parts = [part.strip() for part in (message.text or "").split("|", 1)]
         if len(parts) != 2:
-            await message.answer("Use: card_number | holder")
+            await message.answer("فرمت درست: شماره کارت | نام صاحب کارت")
             return
         card, holder = parts
         await service.set("card_number", card)
@@ -600,13 +619,13 @@ async def admin_set_value(message: Message, state: FSMContext, session: AsyncSes
     else:
         await service.set(key, message.text or "")
     await state.clear()
-    await message.answer("Saved.")
+    await message.answer("ذخیره شد.")
 
 
 @router.callback_query(F.data == "admin:receipts")
 async def pending_receipts(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     result = await session.execute(
         select(PaymentRequest).where(
@@ -616,80 +635,80 @@ async def pending_receipts(callback: CallbackQuery, session: AsyncSession) -> No
     )
     payments = list(result.scalars())
     if not payments:
-        await callback.message.answer("No pending receipts.")
+        await callback.message.answer("رسید در انتظاری وجود ندارد.")
     for payment in payments:
-        await callback.message.answer(f"Receipt #{payment.id}: {payment.amount_toman:,} Toman")
+        await callback.message.answer(f"رسید #{payment.id}: {payment.amount_toman:,} تومان")
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("admin_receipt_ok:"))
 async def approve_receipt(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     payment = await session.get(PaymentRequest, int(callback.data.split(":", 1)[1]))
     if payment:
-        await PaymentService(session).approve(payment, f"Approved by {callback.from_user.id}")
+        await PaymentService(session).approve(payment, f"تایید شده توسط {callback.from_user.id}")
         user = await session.get(User, payment.user_id)
         if user:
-            await callback.bot.send_message(user.telegram_id, f"Receipt approved. Wallet charged by {payment.amount_toman:,} Toman.")
-    await callback.answer("Approved")
+            await callback.bot.send_message(user.telegram_id, f"رسید شما تایید شد. کیف پول به مبلغ {payment.amount_toman:,} تومان شارژ شد.")
+    await callback.answer("تایید شد.")
 
 
 @router.callback_query(F.data.startswith("admin_receipt_no:"))
 async def reject_receipt(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     payment = await session.get(PaymentRequest, int(callback.data.split(":", 1)[1]))
     if payment:
-        await PaymentService(session).reject(payment, f"Rejected by {callback.from_user.id}")
+        await PaymentService(session).reject(payment, f"رد شده توسط {callback.from_user.id}")
         user = await session.get(User, payment.user_id)
         if user:
-            await callback.bot.send_message(user.telegram_id, "Receipt rejected. Please contact support if this is wrong.")
-    await callback.answer("Rejected")
+            await callback.bot.send_message(user.telegram_id, "رسید شما رد شد. اگر فکر می‌کنید اشتباهی رخ داده، با پشتیبانی تماس بگیرید.")
+    await callback.answer("رد شد.")
 
 
 @router.callback_query(F.data.startswith("admin_svc_disable:"))
 async def admin_disable_service(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     service = await session.get(VpnService, int(callback.data.split(":", 1)[1]))
     if service:
         panel = await CatalogService(session).client_for_panel(service.panel_id)
         await VpnServiceManager(session, panel).disable(service)
-    await callback.answer("Disabled")
+    await callback.answer("غیرفعال شد.")
 
 
 @router.callback_query(F.data.startswith("admin_svc_reactivate:"))
 async def admin_reactivate_service(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     service = await session.get(VpnService, int(callback.data.split(":", 1)[1]))
     if service:
         panel = await CatalogService(session).client_for_panel(service.panel_id)
         await VpnServiceManager(session, panel).reenable(service)
-    await callback.answer("Reactivated")
+    await callback.answer("فعال شد.")
 
 
 @router.callback_query(F.data.startswith("admin_svc_delete:"))
 async def admin_delete_service(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     service = await session.get(VpnService, int(callback.data.split(":", 1)[1]))
     if service:
         panel = await CatalogService(session).client_for_panel(service.panel_id)
         await VpnServiceManager(session, panel).delete(service)
-    await callback.answer("Deleted")
+    await callback.answer("حذف شد.")
 
 
 @router.callback_query(F.data.startswith("admin_user_block:"))
 async def admin_block_user(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     user = await session.get(User, int(callback.data.split(":", 1)[1]))
     if user:
@@ -703,34 +722,34 @@ async def admin_block_user(callback: CallbackQuery, session: AsyncSession) -> No
         for service in result.scalars():
             panel = await CatalogService(session).client_for_panel(service.panel_id)
             await VpnServiceManager(session, panel).disable(service)
-    await callback.answer("User blocked")
+    await callback.answer("کاربر مسدود شد.")
 
 
 @router.callback_query(F.data.startswith("admin_user_unblock:"))
 async def admin_unblock_user(callback: CallbackQuery, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     user = await session.get(User, int(callback.data.split(":", 1)[1]))
     if user:
         user.is_blocked = False
-    await callback.answer("User unblocked")
+    await callback.answer("مسدودی کاربر برداشته شد.")
 
 
 @router.callback_query(F.data == "admin:broadcast")
 async def broadcast_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     await state.set_state(AdminState.broadcast)
-    await callback.message.answer("Send broadcast text.")
+    await callback.message.answer("متن پیام همگانی را ارسال کنید:")
     await callback.answer()
 
 
 @router.message(AdminState.broadcast)
 async def broadcast_send(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     result = await session.execute(select(User.telegram_id))
     sent = 0
@@ -741,57 +760,57 @@ async def broadcast_send(message: Message, state: FSMContext, session: AsyncSess
         except Exception:
             pass
     await state.clear()
-    await message.answer(f"Broadcast sent to {sent} users.")
+    await message.answer(f"پیام همگانی برای {sent} کاربر ارسال شد.")
 
 
 @router.message(Command("add_balance"))
 async def add_balance(message: Message, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     parts = (message.text or "").split()
     if len(parts) != 3:
-        await message.answer("Usage: /add_balance <telegram_id> <amount>")
+        await message.answer("فرمت دستور: /add_balance <telegram_id> <amount>")
         return
     user = (await session.execute(select(User).where(User.telegram_id == int(parts[1])))).scalar_one_or_none()
     if not user:
-        await message.answer("User not found.")
+        await message.answer("کاربر پیدا نشد.")
         return
-    await WalletService(session).add(user, int(parts[2]), TransactionKind.admin_adjustment, f"Admin adjustment by {message.from_user.id}")
-    await message.answer("Balance updated.")
+    await WalletService(session).add(user, int(parts[2]), TransactionKind.admin_adjustment, f"تغییر موجودی توسط ادمین {message.from_user.id}")
+    await message.answer("موجودی بروزرسانی شد.")
 
 
 @router.message(Command("remove_balance"))
 async def remove_balance(message: Message, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     parts = (message.text or "").split()
     if len(parts) != 3:
-        await message.answer("Usage: /remove_balance <telegram_id> <amount>")
+        await message.answer("فرمت دستور: /remove_balance <telegram_id> <amount>")
         return
     user = (await session.execute(select(User).where(User.telegram_id == int(parts[1])))).scalar_one_or_none()
     if not user:
-        await message.answer("User not found.")
+        await message.answer("کاربر پیدا نشد.")
         return
     amount = min(user.wallet_balance_toman, int(parts[2]))
     await WalletService(session).deduct(
         user,
         amount,
-        f"Admin balance removal by {message.from_user.id}",
+        f"کسر موجودی توسط ادمین {message.from_user.id}",
         {"admin_id": message.from_user.id},
     )
-    await message.answer("Balance updated.")
+    await message.answer("موجودی بروزرسانی شد.")
 
 
 @router.message(Command("user"))
 async def user_lookup(message: Message, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     parts = (message.text or "").split()
     if len(parts) != 2:
-        await message.answer("Usage: /user <telegram_id>")
+        await message.answer("فرمت دستور: /user <telegram_id>")
         return
     await send_admin_user_info(message, session, int(parts[1]))
 
@@ -799,10 +818,10 @@ async def user_lookup(message: Message, session: AsyncSession) -> None:
 @router.message(Command("service_disable"))
 async def service_disable(message: Message, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
-        await message.answer("Access denied.")
+        await message.answer("دسترسی ندارید.")
         return
     service = await session.get(VpnService, int((message.text or "").split()[1]))
     if service:
         panel = await CatalogService(session).client_for_panel(service.panel_id)
         await VpnServiceManager(session, panel).disable(service)
-        await message.answer("Service disabled.")
+        await message.answer("سرویس غیرفعال شد.")

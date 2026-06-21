@@ -22,7 +22,6 @@ async def verify_crypto_payments(session: AsyncSession) -> None:
                 token = await settings.get("nowpayments_api_token")
                 paid = await NowPaymentsClient(token or "").is_paid(payment.provider_invoice_id or "")
             if paid:
-                await service.approve(payment, "Auto-approved by provider verification")
+                await service.approve(payment, "تایید خودکار توسط درگاه پرداخت")
         except PaymentProviderError:
             logger.exception("Payment provider verification failed for payment %s", payment.id)
-

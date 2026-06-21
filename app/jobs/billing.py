@@ -48,7 +48,7 @@ async def sync_traffic_usage(bot: Bot) -> None:
                 paid = await wallet.deduct(
                     user,
                     cost,
-                    f"Traffic usage charge for {delta_mb} MB",
+                    f"هزینه مصرف ترافیک به مقدار {delta_mb} مگابایت",
                     {"service_id": service.id, "used_mb": delta_mb},
                 )
                 if not paid:
@@ -57,8 +57,8 @@ async def sync_traffic_usage(bot: Bot) -> None:
                     service.disabled_at = datetime.now(UTC)
                     await bot.send_message(
                         user.telegram_id,
-                        "Your service was disabled because your wallet balance is not enough. "
-                        "Charge your wallet to reactivate it.",
+                        "سرویس شما به دلیل کافی نبودن موجودی کیف پول غیرفعال شد. "
+                        "برای فعال‌سازی مجدد، کیف پول خود را شارژ کنید.",
                     )
                     continue
                 await wallet.pay_referral_cashback(user, cost)
@@ -76,7 +76,7 @@ async def sync_traffic_usage(bot: Bot) -> None:
                 if user.wallet_balance_toman <= low_threshold:
                     await bot.send_message(
                         user.telegram_id,
-                        f"Low wallet balance: {user.wallet_balance_toman:,} Toman. Please recharge soon.",
+                        f"موجودی کیف پول شما کم است: {user.wallet_balance_toman:,} تومان. لطفاً کیف پول را شارژ کنید.",
                     )
             except PasarGuardError:
                 logger.exception("PasarGuard sync failed for service %s", service.id)
@@ -97,7 +97,7 @@ async def delete_stale_disabled_services(bot: Bot) -> None:
                 panel = await catalog.client_for_panel(service.panel_id)
                 await panel.delete_user(service.pasarguard_username)
                 service.status = ServiceStatus.deleted.value
-                await bot.send_message(user.telegram_id, "A disabled service was deleted after 48 hours without recharge.")
+                await bot.send_message(user.telegram_id, "یکی از سرویس‌های غیرفعال شما به دلیل عدم شارژ/فعال‌سازی طی ۴۸ ساعت حذف شد.")
             except PasarGuardError:
                 logger.exception("Failed deleting stale service %s", service.id)
         await session.commit()

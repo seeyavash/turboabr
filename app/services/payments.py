@@ -35,7 +35,7 @@ class PaymentService:
             token = await self.settings.get("nowpayments_api_token")
             invoice_id, url = await NowPaymentsClient(token or "").create_invoice(amount, order_id)
         else:
-            raise ValueError("Unsupported crypto method")
+            raise ValueError("روش پرداخت پشتیبانی نمی‌شود.")
         payment.provider_invoice_id = invoice_id
         payment.provider_url = url
         return payment
@@ -45,14 +45,14 @@ class PaymentService:
             return
         user = await self.session.get(User, payment.user_id)
         if not user:
-            raise ValueError("Payment user not found")
+            raise ValueError("کاربر پرداخت پیدا نشد.")
         payment.status = PaymentStatus.approved.value
         payment.admin_note = admin_note
         await WalletService(self.session).add(
             user,
             payment.amount_toman,
             TransactionKind.deposit,
-            f"Wallet charge via {payment.method}",
+            f"شارژ کیف پول از طریق {payment.method}",
             {"payment_id": payment.id},
         )
 
@@ -68,4 +68,3 @@ class PaymentService:
             )
         )
         return list(result.scalars())
-

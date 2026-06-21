@@ -16,7 +16,7 @@ class VpnServiceManager:
     async def create_paid_service(self, user: User, service_type: ServiceType) -> VpnService:
         min_balance = await SettingsService(self.session).get_int("min_new_service_balance", 50000)
         if user.wallet_balance_toman < min_balance:
-            raise ValueError(f"Wallet balance must be at least {min_balance:,} Toman")
+            raise ValueError(f"برای خرید سرویس جدید، موجودی کیف پول باید حداقل {min_balance:,} تومان باشد.")
         return await self._create(
             user,
             service_type.value,
@@ -30,7 +30,7 @@ class VpnServiceManager:
     async def create_paid_plan(self, user: User, plan: ProductPlan) -> VpnService:
         min_balance = await SettingsService(self.session).get_int("min_new_service_balance", 50000)
         if user.wallet_balance_toman < min_balance:
-            raise ValueError(f"Wallet balance must be at least {min_balance:,} Toman")
+            raise ValueError(f"برای خرید سرویس جدید، موجودی کیف پول باید حداقل {min_balance:,} تومان باشد.")
         return await self._create(
             user,
             plan.name,
@@ -43,7 +43,7 @@ class VpnServiceManager:
 
     async def create_test_service(self, user: User) -> VpnService:
         if user.has_test_account:
-            raise ValueError("Test account was already used")
+            raise ValueError("شما قبلاً اکانت تست دریافت کرده‌اید.")
         user.has_test_account = True
         expire = int((datetime.now(UTC) + timedelta(days=1)).timestamp())
         return await self._create(

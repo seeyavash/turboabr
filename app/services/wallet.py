@@ -50,7 +50,6 @@ class WalletService:
                 inviter,
                 cashback,
                 TransactionKind.referral_cashback,
-                f"Referral cashback from user {spender.telegram_id}",
+                f"کش‌بک معرفی از کاربر {spender.telegram_id}",
                 {"spender_id": spender.id, "spent_amount_toman": spent_amount},
             )
-
