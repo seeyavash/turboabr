@@ -1,3 +1,6 @@
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -12,6 +15,8 @@ from app.bot.keyboards.admin import (
     admin_service_actions,
     admin_user_actions,
     admins_menu,
+    broadcast_pin_keyboard,
+    broadcast_restart_keyboard,
     panel_actions,
     panels_list_keyboard,
     plan_panel_keyboard,
@@ -29,7 +34,7 @@ from app.bot.keyboards.admin import (
     test_settings_menu,
     user_services_menu,
 )
-from app.db.models import PanelTemplate, PasarGuardPanel, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, User, VpnService
+from app.db.models import PanelTemplate, PasarGuardPanel, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, User, VpnService, WalletTransaction
 from app.services.catalog import CatalogService
 from app.services.menu import ACTION_LABELS, COLOR_LABELS, MenuService
 from app.services.notifications import send_supergroup_message
@@ -82,6 +87,7 @@ class AdminState(StatesGroup):
     add_admin = State()
     user_lookup = State()
     broadcast = State()
+    broadcast_pin = State()
     wallet_adjust = State()
 
 
@@ -213,6 +219,46 @@ async def dashboard(callback: CallbackQuery, session: AsyncSession) -> None:
     await replace_message(
         callback,
         f"تعداد کاربران: {users}\nسرویس‌های فعال: {active}\nسرویس‌های غیرفعال: {disabled}\nمجموع موجودی کیف پول‌ها: {wallet_sum:,} تومان"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:bot_status")
+async def bot_status(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+
+    tehran = ZoneInfo("Asia/Tehran")
+    now_tehran = datetime.now(tehran)
+    start_tehran = now_tehran.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_tehran = start_tehran.replace(hour=23, minute=59, second=59, microsecond=999999)
+    start_utc = start_tehran.astimezone(UTC)
+    end_utc = end_tehran.astimezone(UTC)
+
+    users = await session.scalar(select(func.count(User.id)))
+    total_sales = await session.scalar(
+        select(func.coalesce(func.sum(WalletTransaction.amount_toman), 0)).where(
+            WalletTransaction.kind == TransactionKind.deposit.value,
+            WalletTransaction.amount_toman > 0,
+        )
+    )
+    today_sales = await session.scalar(
+        select(func.coalesce(func.sum(WalletTransaction.amount_toman), 0)).where(
+            WalletTransaction.kind == TransactionKind.deposit.value,
+            WalletTransaction.amount_toman > 0,
+            WalletTransaction.created_at >= start_utc,
+            WalletTransaction.created_at <= end_utc,
+        )
+    )
+
+    await replace_message(
+        callback,
+        "وضعیت ربات\n\n"
+        f"تعداد کاربران: {users or 0:,}\n"
+        f"فروش کل ربات: {total_sales or 0:,} تومان\n"
+        f"درآمد امروز تهران ({start_tehran:%Y-%m-%d} از 00:00 تا 23:59): {today_sales or 0:,} تومان",
+        reply_markup=admin_menu(),
     )
     await callback.answer()
 
@@ -1563,20 +1609,62 @@ async def broadcast_start(callback: CallbackQuery, state: FSMContext, session: A
 
 
 @router.message(AdminState.broadcast)
-async def broadcast_send(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def broadcast_pin_prompt(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
         await message.answer("دسترسی ندارید.")
         return
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer("برای پیام همگانی فقط متن ارسال کنید.")
+        return
+    await state.update_data(broadcast_text=text)
+    await state.set_state(AdminState.broadcast_pin)
+    await message.answer("آیا می‌خواهید این پیام برای کاربران پین شود؟", reply_markup=broadcast_pin_keyboard())
+
+
+@router.callback_query(F.data.startswith("admin_broadcast_pin:"))
+async def broadcast_send(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    data = await state.get_data()
+    text = data.get("broadcast_text")
+    if not text:
+        await state.clear()
+        await replace_message(callback, "متن پیام همگانی پیدا نشد. دوباره پیام را ثبت کنید.", reply_markup=user_services_menu())
+        await callback.answer()
+        return
+
+    should_pin = callback.data.endswith(":yes")
+    bot_info = await callback.bot.get_me()
+    restart_markup = broadcast_restart_keyboard(bot_info.username)
     result = await session.execute(select(User.telegram_id))
     sent = 0
+    pinned = 0
     for telegram_id in result.scalars():
         try:
-            await message.bot.send_message(telegram_id, message.text or "")
+            sent_message = await callback.bot.send_message(telegram_id, text, reply_markup=restart_markup)
             sent += 1
+            if should_pin:
+                try:
+                    await callback.bot.pin_chat_message(
+                        chat_id=telegram_id,
+                        message_id=sent_message.message_id,
+                        disable_notification=True,
+                    )
+                    pinned += 1
+                except Exception:
+                    pass
         except Exception:
             pass
     await state.clear()
-    await message.answer(f"پیام همگانی برای {sent} کاربر ارسال شد.")
+    await replace_message(
+        callback,
+        f"پیام همگانی برای {sent} کاربر ارسال شد.\n"
+        f"تعداد پین‌شده‌ها: {pinned if should_pin else 0}",
+        reply_markup=user_services_menu(),
+    )
+    await callback.answer()
 
 
 @router.message(Command("add_balance"))

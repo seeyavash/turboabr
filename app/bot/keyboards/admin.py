@@ -12,6 +12,7 @@ def admin_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="داشبورد", callback_data="admin:dashboard")],
+            [InlineKeyboardButton(text="وضعیت ربات", callback_data="admin:bot_status")],
             [InlineKeyboardButton(text="مدیریت پنل‌ها", callback_data="admin:panels")],
             [InlineKeyboardButton(text="تنظیمات فروشگاه", callback_data="admin:store")],
             [InlineKeyboardButton(text="تنظیمات ادمین‌ها", callback_data="admin:admins")],
@@ -37,6 +38,26 @@ def receipt_review(payment_id: int) -> InlineKeyboardMarkup:
 def admin_back_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="بازگشت به مدیریت", callback_data="admin:menu")]]
+    )
+
+
+def broadcast_pin_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="بله، پین شود", callback_data="admin_broadcast_pin:yes"),
+                InlineKeyboardButton(text="نه، فقط ارسال شود", callback_data="admin_broadcast_pin:no"),
+            ],
+            [InlineKeyboardButton(text="لغو", callback_data="admin:menu")],
+        ]
+    )
+
+
+def broadcast_restart_keyboard(bot_username: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="شروع مجدد ربات", url=f"https://t.me/{bot_username}?start=restart")]
+        ]
     )
 
 
