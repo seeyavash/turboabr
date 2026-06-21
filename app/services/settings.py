@@ -22,6 +22,14 @@ DEFAULTS: dict[str, str] = {
     "card_number": "",
     "card_holder": "",
     "admin_ids": "",
+    "test_account_enabled": "true",
+    "test_panel_id": "",
+    "supergroup_chat_id": "",
+    "supergroup_users_thread_id": "",
+    "supergroup_receipts_thread_id": "",
+    "supergroup_errors_thread_id": "",
+    "supergroup_orders_thread_id": "",
+    "supergroup_account_changes_thread_id": "",
 }
 
 SECRET_KEYS = {"plisio_api_token", "nowpayments_api_token"}

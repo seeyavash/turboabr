@@ -8,6 +8,7 @@ from app.db.models import ProductPlan, ServiceStatus, ServiceType, TrafficUsageL
 from app.db.session import SessionLocal
 from app.integrations.pasarguard import PasarGuardError
 from app.services.catalog import CatalogService
+from app.services.notifications import send_supergroup_message
 from app.services.settings import SettingsService
 from app.services.wallet import WalletService
 
@@ -80,6 +81,12 @@ async def sync_traffic_usage(bot: Bot) -> None:
                     )
             except PasarGuardError:
                 logger.exception("PasarGuard sync failed for service %s", service.id)
+                await send_supergroup_message(
+                    session,
+                    bot,
+                    "errors",
+                    f"خطا در همگام‌سازی مصرف\nسرویس: #{service.id}\nکاربر: {user.telegram_id}",
+                )
         await session.commit()
 
 
@@ -98,6 +105,18 @@ async def delete_stale_disabled_services(bot: Bot) -> None:
                 await panel.delete_user(service.pasarguard_username)
                 service.status = ServiceStatus.deleted.value
                 await bot.send_message(user.telegram_id, "یکی از سرویس‌های غیرفعال شما به دلیل عدم شارژ/فعال‌سازی طی ۴۸ ساعت حذف شد.")
+                await send_supergroup_message(
+                    session,
+                    bot,
+                    "account_changes",
+                    f"سرویس غیرفعال بعد از ۴۸ ساعت حذف شد\nکاربر: {user.telegram_id}\nاکانت: {service.pasarguard_username}",
+                )
             except PasarGuardError:
                 logger.exception("Failed deleting stale service %s", service.id)
+                await send_supergroup_message(
+                    session,
+                    bot,
+                    "errors",
+                    f"خطا در حذف سرویس غیرفعال قدیمی\nسرویس: #{service.id}\nکاربر: {user.telegram_id}",
+                )
         await session.commit()

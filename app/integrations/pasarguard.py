@@ -1,5 +1,7 @@
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 
 from aiohttp import ClientSession, ClientTimeout
 
@@ -10,7 +12,15 @@ class PasarGuardError(RuntimeError):
     pass
 
 
+@dataclass
+class CachedToken:
+    value: str
+    until: datetime
+
+
 class PasarGuardClient:
+    _token_cache: dict[str, CachedToken] = {}
+
     def __init__(
         self,
         base_url: str | None = None,
@@ -24,8 +34,11 @@ class PasarGuardClient:
         self.password = password or ""
         self.group_ids = group_ids if group_ids is not None else []
         self.subscription_client_type = subscription_client_type or "v2ray"
-        self._token: str | None = None
-        self._token_until: datetime | None = None
+
+    @property
+    def cache_key(self) -> str:
+        raw = f"{self.base_url}|{self.username}|{self.password}"
+        return sha256(raw.encode()).hexdigest()
 
     async def _request(self, method: str, path: str, **kwargs) -> dict | list | str | None:
         if not self.base_url:
@@ -46,15 +59,16 @@ class PasarGuardClient:
                 return text
 
     async def token(self) -> str:
-        if self._token and self._token_until and self._token_until > datetime.now(UTC):
-            return self._token
+        cached = self._token_cache.get(self.cache_key)
+        if cached and cached.until > datetime.now(UTC):
+            return cached.value
         payload = {"username": self.username, "password": self.password}
         data = await self._request("POST", "/api/admin/token", data=payload)
         if not isinstance(data, dict) or "access_token" not in data:
             raise PasarGuardError("PasarGuard token response did not include access_token")
-        self._token = str(data["access_token"])
-        self._token_until = datetime.now(UTC) + timedelta(minutes=20)
-        return self._token
+        token = str(data["access_token"])
+        self._token_cache[self.cache_key] = CachedToken(token, datetime.now(UTC) + timedelta(hours=23))
+        return token
 
     async def create_user(self, username: str, data_limit_bytes: int = 0, expire: int = 0) -> dict:
         if not self.group_ids:

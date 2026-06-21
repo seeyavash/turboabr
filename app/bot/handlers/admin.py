@@ -20,10 +20,14 @@ from app.bot.keyboards.admin import (
     payment_toggle_keyboard,
     plan_actions,
     store_menu,
+    supergroup_menu,
+    test_panel_keyboard,
+    test_settings_menu,
     user_services_menu,
 )
 from app.db.models import PanelTemplate, PasarGuardPanel, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, User, VpnService
 from app.services.catalog import CatalogService
+from app.services.notifications import send_supergroup_message
 from app.services.payments import PaymentService
 from app.services.services import VpnServiceManager
 from app.services.settings import SettingsService
@@ -44,6 +48,7 @@ class AdminState(StatesGroup):
     set_value = State()
     card_number = State()
     card_holder = State()
+    supergroup_chat_id = State()
     panel_name = State()
     panel_url = State()
     panel_username = State()
@@ -271,6 +276,131 @@ async def user_services_section(callback: CallbackQuery, session: AsyncSession) 
         return
     await replace_message(callback, "خدمات کاربر", reply_markup=user_services_menu())
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin:test_settings")
+async def test_settings_section(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    settings = SettingsService(session)
+    enabled = await settings.get_bool("test_account_enabled", True)
+    test_panel_id = await settings.get("test_panel_id", "")
+    panel_name = "-"
+    if test_panel_id:
+        panel = await session.get(PasarGuardPanel, int(test_panel_id))
+        panel_name = panel.name if panel else "پنل پیدا نشد"
+    await replace_message(
+        callback,
+        f"تنظیمات اکانت تست\n"
+        f"وضعیت: {'فعال' if enabled else 'غیرفعال'}\n"
+        f"پنل تست: {panel_name}\n"
+        f"حجم: ۱۰۰ مگابایت\n"
+        f"مدت: ۱ روز",
+        reply_markup=test_settings_menu(enabled),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_test_enabled:"))
+async def test_enabled_set(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    value = callback.data.split(":", 1)[1]
+    await SettingsService(session).set("test_account_enabled", value)
+    await test_settings_section(callback, session)
+
+
+@router.callback_query(F.data == "admin_test_panel_select")
+async def test_panel_select(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    panels = await CatalogService(session).active_panels()
+    if not panels:
+        await replace_message(callback, "هیچ پنل فعالی پیدا نشد.", reply_markup=test_settings_menu(True))
+        await callback.answer()
+        return
+    await replace_message(callback, "پنل اکانت تست را انتخاب کنید:", reply_markup=test_panel_keyboard(panels))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_test_panel:"))
+async def test_panel_set(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    panel = await session.get(PasarGuardPanel, int(callback.data.split(":", 1)[1]))
+    if not panel:
+        await callback.answer("پنل پیدا نشد.", show_alert=True)
+        return
+    await SettingsService(session).set("test_panel_id", str(panel.id))
+    await test_settings_section(callback, session)
+
+
+@router.callback_query(F.data == "admin:supergroup")
+async def supergroup_section(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    await state.clear()
+    settings = SettingsService(session)
+    chat_id = await settings.get("supergroup_chat_id", "")
+    await replace_message(
+        callback,
+        "تنظیم سوپرگروه\n"
+        f"گروه فعلی: {chat_id or '-'}\n\n"
+        "گروه را forum/supergroup کن، ربات را ادمین کن، بعد chat id گروه را از @myidbot بگیر و اینجا ثبت کن.",
+        reply_markup=supergroup_menu(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_supergroup:set")
+async def supergroup_set_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    await state.clear()
+    await state.update_data(prompt_message_id=callback.message.message_id)
+    await state.set_state(AdminState.supergroup_chat_id)
+    await replace_message(callback, "آیدی عددی سوپرگروه را ارسال کنید.\nمثال: -1001234567890")
+    await callback.answer()
+
+
+@router.message(AdminState.supergroup_chat_id)
+async def supergroup_chat_id_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    raw_chat_id = (message.text or "").strip()
+    try:
+        chat_id = int(raw_chat_id)
+    except ValueError:
+        await send_step_prompt(message, state, "آیدی گروه باید عددی باشد. دوباره ارسال کنید:")
+        return
+    topics = {
+        "supergroup_users_thread_id": "کاربران",
+        "supergroup_receipts_thread_id": "رسیدها",
+        "supergroup_errors_thread_id": "خطاها",
+        "supergroup_orders_thread_id": "خرید و تمدید",
+        "supergroup_account_changes_thread_id": "تغییرات اکانت",
+    }
+    settings = SettingsService(session)
+    try:
+        await settings.set("supergroup_chat_id", str(chat_id))
+        for key, title in topics.items():
+            topic = await message.bot.create_forum_topic(chat_id, title)
+            await settings.set(key, str(topic.message_thread_id))
+    except Exception as exc:
+        await cleanup_step_prompt(message, state)
+        await state.clear()
+        await message.answer(f"خطا در ساخت تاپیک‌ها:\n{exc}\n\nمطمئن شو گروه forum است و ربات ادمین شده.")
+        return
+    await cleanup_step_prompt(message, state)
+    await state.clear()
+    await message.answer("سوپرگروه با موفقیت وصل شد و تاپیک‌ها ساخته شدند.")
 
 
 @router.callback_query(F.data == "admin_panel:add")
@@ -1086,6 +1216,16 @@ async def approve_receipt(callback: CallbackQuery, session: AsyncSession) -> Non
         user = await session.get(User, payment.user_id)
         if user:
             await callback.bot.send_message(user.telegram_id, f"رسید شما تایید شد. کیف پول به مبلغ {payment.amount_toman:,} تومان شارژ شد.")
+        await send_supergroup_message(
+            session,
+            callback.bot,
+            "receipts",
+            f"رسید تایید شد\nرسید: #{payment.id}\nمبلغ: {payment.amount_toman:,} تومان\nادمین: {callback.from_user.id}",
+        )
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
     await callback.answer("تایید شد.")
 
 
@@ -1100,6 +1240,16 @@ async def reject_receipt(callback: CallbackQuery, session: AsyncSession) -> None
         user = await session.get(User, payment.user_id)
         if user:
             await callback.bot.send_message(user.telegram_id, "رسید شما رد شد. اگر فکر می‌کنید اشتباهی رخ داده، با پشتیبانی تماس بگیرید.")
+        await send_supergroup_message(
+            session,
+            callback.bot,
+            "receipts",
+            f"رسید رد شد\nرسید: #{payment.id}\nمبلغ: {payment.amount_toman:,} تومان\nادمین: {callback.from_user.id}",
+        )
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
     await callback.answer("رد شد.")
 
 
@@ -1112,6 +1262,12 @@ async def admin_disable_service(callback: CallbackQuery, session: AsyncSession) 
     if service:
         panel = await CatalogService(session).client_for_panel(service.panel_id)
         await VpnServiceManager(session, panel).disable(service)
+        await send_supergroup_message(
+            session,
+            callback.bot,
+            "account_changes",
+            f"ادمین سرویس را غیرفعال کرد\nادمین: {callback.from_user.id}\nاکانت: {service.pasarguard_username}",
+        )
     await callback.answer("غیرفعال شد.")
 
 
@@ -1124,6 +1280,12 @@ async def admin_reactivate_service(callback: CallbackQuery, session: AsyncSessio
     if service:
         panel = await CatalogService(session).client_for_panel(service.panel_id)
         await VpnServiceManager(session, panel).reenable(service)
+        await send_supergroup_message(
+            session,
+            callback.bot,
+            "orders",
+            f"ادمین سرویس را فعال کرد\nادمین: {callback.from_user.id}\nاکانت: {service.pasarguard_username}",
+        )
     await callback.answer("فعال شد.")
 
 
@@ -1136,6 +1298,12 @@ async def admin_delete_service(callback: CallbackQuery, session: AsyncSession) -
     if service:
         panel = await CatalogService(session).client_for_panel(service.panel_id)
         await VpnServiceManager(session, panel).delete(service)
+        await send_supergroup_message(
+            session,
+            callback.bot,
+            "account_changes",
+            f"ادمین سرویس را حذف کرد\nادمین: {callback.from_user.id}\nاکانت: {service.pasarguard_username}",
+        )
     await callback.answer("حذف شد.")
 
 

@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.common import main_menu, payment_methods, plan_detail_actions, receipt_button, service_actions, service_types
 from app.core.config import settings as env_settings
-from app.db.models import PaymentMethod, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, VpnService
+from app.db.models import PaymentMethod, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, User, VpnService
 from app.integrations.pasarguard import PasarGuardError
+from app.services.notifications import send_supergroup_message, send_supergroup_photo
 from app.services.catalog import CatalogService
 from app.services.payments import PaymentService
 from app.services.services import VpnServiceManager
@@ -36,7 +37,17 @@ class ChargeWallet(StatesGroup):
 @router.message(CommandStart())
 async def start(message: Message, session: AsyncSession) -> None:
     referral_code = message.text.split(maxsplit=1)[1] if message.text and len(message.text.split()) > 1 else None
+    existed = (await session.execute(select(User).where(User.telegram_id == message.from_user.id))).scalar_one_or_none()
     user = await UserService(session).get_or_create(message.from_user, referral_code)
+    await send_supergroup_message(
+        session,
+        message.bot,
+        "users",
+        f"{'کاربر جدید' if not existed else 'کاربر'} وارد ربات شد\n"
+        f"نام: {user.full_name or '-'}\n"
+        f"یوزرنیم: @{user.username or '-'}\n"
+        f"آیدی عددی: {user.telegram_id}",
+    )
     await message.answer(f"خوش آمدید.\nموجودی کیف پول: {user.wallet_balance_toman:,} تومان", reply_markup=main_menu())
 
 
@@ -96,6 +107,12 @@ async def buy_plan_confirmed(callback: CallbackQuery, session: AsyncSession) -> 
         service = await VpnServiceManager(session, panel).create_paid_plan(user, plan)
     except PasarGuardError as exc:
         await callback.message.answer(f"خطا در ساخت سرویس:\n{exc}")
+        await send_supergroup_message(
+            session,
+            callback.bot,
+            "errors",
+            f"خطا در ساخت سرویس\nکاربر: {user.telegram_id}\nتعرفه: {plan.name}\nخطا: {exc}",
+        )
         await callback.answer()
         return
     except ValueError as exc:
@@ -104,8 +121,24 @@ async def buy_plan_confirmed(callback: CallbackQuery, session: AsyncSession) -> 
         return
     except Exception as exc:
         await callback.message.answer("خطای غیرمنتظره در ساخت سرویس. لطفاً با پشتیبانی تماس بگیرید.")
+        await send_supergroup_message(
+            session,
+            callback.bot,
+            "errors",
+            f"خطای غیرمنتظره در ساخت سرویس\nکاربر: {user.telegram_id}\nتعرفه: {plan.name}\nخطا: {exc}",
+        )
         await callback.answer()
         return
+    await send_supergroup_message(
+        session,
+        callback.bot,
+        "orders",
+        f"سرویس جدید ساخته شد\n"
+        f"کاربر: {user.full_name or '-'}\n"
+        f"آیدی عددی: {user.telegram_id}\n"
+        f"تعرفه: {plan.name}\n"
+        f"نام اکانت: {service.pasarguard_username}",
+    )
     await callback.message.answer(f"سرویس شما ساخته شد.\nلینک اشتراک:\n{service.subscription_url}")
     await callback.answer()
 
@@ -116,19 +149,42 @@ async def test_account(message: Message, session: AsyncSession) -> None:
     if user.is_blocked:
         await message.answer("حساب شما مسدود شده است.")
         return
-    panels = await CatalogService(session).active_panels()
-    if not panels:
+    settings = SettingsService(session)
+    if not await settings.get_bool("test_account_enabled", True):
+        await message.answer("اکانت تست فعلاً غیرفعال است.")
+        return
+    test_panel_id = await settings.get("test_panel_id", "")
+    panel_id = int(test_panel_id) if test_panel_id else None
+    if panel_id is None:
+        panels = await CatalogService(session).active_panels()
+        panel_id = panels[0].id if panels else None
+    if panel_id is None:
         await message.answer("فعلاً پنل PasarGuard تنظیم نشده است. لطفاً با پشتیبانی تماس بگیرید.")
         return
     try:
-        panel = await CatalogService(session).client_for_panel(panels[0].id)
+        panel = await CatalogService(session).client_for_panel(panel_id)
         service = await VpnServiceManager(session, panel).create_test_service(user)
     except PasarGuardError as exc:
         await message.answer(f"خطا در ساخت اکانت تست:\n{exc}")
+        await send_supergroup_message(
+            session,
+            message.bot,
+            "errors",
+            f"خطا در ساخت اکانت تست\nکاربر: {user.telegram_id}\nخطا: {exc}",
+        )
         return
     except Exception as exc:
         await message.answer(str(exc))
         return
+    await send_supergroup_message(
+        session,
+        message.bot,
+        "orders",
+        f"اکانت تست ساخته شد\n"
+        f"کاربر: {user.full_name or '-'}\n"
+        f"آیدی عددی: {user.telegram_id}\n"
+        f"نام اکانت: {service.pasarguard_username}",
+    )
     await message.answer(f"اکانت تست شما فعال شد: ۱۰۰ مگابایت، ۱ روز.\n{service.subscription_url}")
 
 
@@ -165,6 +221,12 @@ async def reactivate_service(callback: CallbackQuery, session: AsyncSession) -> 
         return
     panel = await CatalogService(session).client_for_panel(service.panel_id)
     await VpnServiceManager(session, panel).reenable(service)
+    await send_supergroup_message(
+        session,
+        callback.bot,
+        "orders",
+        f"سرویس دوباره فعال شد\nکاربر: {user.telegram_id}\nاکانت: {service.pasarguard_username}",
+    )
     await callback.message.answer("سرویس دوباره فعال شد.")
     await callback.answer()
 
@@ -178,6 +240,12 @@ async def delete_service(callback: CallbackQuery, session: AsyncSession) -> None
         return
     panel = await CatalogService(session).client_for_panel(service.panel_id)
     await VpnServiceManager(session, panel).delete(service)
+    await send_supergroup_message(
+        session,
+        callback.bot,
+        "account_changes",
+        f"کاربر سرویس را حذف کرد\nکاربر: {user.telegram_id}\nاکانت: {service.pasarguard_username}",
+    )
     await callback.message.answer("سرویس حذف شد.")
     await callback.answer()
 
@@ -271,16 +339,26 @@ async def receive_receipt(message: Message, state: FSMContext, session: AsyncSes
         return
     payment.receipt_file_id = message.photo[-1].file_id
     payment.status = PaymentStatus.pending.value
-    admins = await SettingsService(session).admin_ids()
     from app.bot.keyboards.admin import receipt_review
 
-    for admin_id in admins:
-        await message.bot.send_photo(
-            admin_id,
-            payment.receipt_file_id,
-            caption=f"رسید #{payment.id}\nکاربر: {message.from_user.id}\nمبلغ: {payment.amount_toman:,} تومان",
-            reply_markup=receipt_review(payment.id),
-        )
+    caption = f"رسید #{payment.id}\nکاربر: {message.from_user.id}\nمبلغ: {payment.amount_toman:,} تومان"
+    sent_to_group = await send_supergroup_photo(
+        session,
+        message.bot,
+        "receipts",
+        payment.receipt_file_id,
+        caption,
+        reply_markup=receipt_review(payment.id),
+    )
+    if not sent_to_group:
+        admins = await SettingsService(session).admin_ids()
+        for admin_id in admins:
+            await message.bot.send_photo(
+                admin_id,
+                payment.receipt_file_id,
+                caption=caption,
+                reply_markup=receipt_review(payment.id),
+            )
     await state.clear()
     await message.answer("رسید شما برای بررسی ادمین ارسال شد.")
 

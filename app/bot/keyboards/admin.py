@@ -10,6 +10,7 @@ def admin_menu() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="تنظیمات ادمین‌ها", callback_data="admin:admins")],
             [InlineKeyboardButton(text="تنظیمات پرداخت", callback_data="admin:payment_settings")],
             [InlineKeyboardButton(text="خدمات کاربر", callback_data="admin:user_services")],
+            [InlineKeyboardButton(text="تنظیم سوپرگروه", callback_data="admin:supergroup")],
         ]
     )
 
@@ -84,11 +85,30 @@ def store_menu() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="افزودن تعرفه", callback_data="admin_plan:add")],
             [InlineKeyboardButton(text="لیست تعرفه‌ها", callback_data="admin_plan:list")],
+            [InlineKeyboardButton(text="تنظیمات اکانت تست", callback_data="admin:test_settings")],
             [InlineKeyboardButton(text="حد هشدار کمبود موجودی", callback_data="admin_set:low_balance_threshold")],
             [InlineKeyboardButton(text="درصد کش‌بک معرفی", callback_data="admin_set:referral_cashback_percent")],
             [InlineKeyboardButton(text="بازگشت", callback_data="admin:menu")],
         ]
     )
+
+
+def test_settings_menu(enabled: bool) -> InlineKeyboardMarkup:
+    toggle_text = "غیرفعال کردن تست" if enabled else "فعال کردن تست"
+    toggle_value = "false" if enabled else "true"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=toggle_text, callback_data=f"admin_test_enabled:{toggle_value}")],
+            [InlineKeyboardButton(text="انتخاب پنل تست", callback_data="admin_test_panel_select")],
+            [InlineKeyboardButton(text="بازگشت", callback_data="admin:store")],
+        ]
+    )
+
+
+def test_panel_keyboard(panels) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=panel.name, callback_data=f"admin_test_panel:{panel.id}")] for panel in panels]
+    rows.append([InlineKeyboardButton(text="بازگشت", callback_data="admin:test_settings")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def plan_panel_keyboard(panels) -> InlineKeyboardMarkup:
@@ -160,6 +180,15 @@ def payment_toggle_keyboard(key: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="غیرفعال", callback_data=f"admin_set_bool:{key}:false"),
             ],
             [InlineKeyboardButton(text="بازگشت", callback_data="admin:payment_settings")],
+        ]
+    )
+
+
+def supergroup_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="ثبت گروه و ساخت تاپیک‌ها", callback_data="admin_supergroup:set")],
+            [InlineKeyboardButton(text="بازگشت", callback_data="admin:menu")],
         ]
     )
 
