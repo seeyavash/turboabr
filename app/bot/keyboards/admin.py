@@ -140,11 +140,13 @@ def test_panel_keyboard(panels) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def plan_panel_keyboard(panels) -> InlineKeyboardMarkup:
+def plan_panel_keyboard(panels, allow_keep_current: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=panel.name, callback_data=f"admin_plan_panel:{panel.id}")]
         for panel in panels
     ]
+    if allow_keep_current:
+        rows.append([InlineKeyboardButton(text="حفظ پنل فعلی", callback_data="admin_plan_panel_keep")])
     rows.append([InlineKeyboardButton(text="لغو", callback_data="admin:store")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -191,6 +193,7 @@ def payment_settings_menu() -> InlineKeyboardMarkup:
         ("توکن NOWPayments", "nowpayments_api_token"),
         ("وضعیت استارز", "payment_stars_enabled"),
         ("نرخ هر استار", "stars_to_toman_rate"),
+        ("حداقل موجودی ساخت اکانت", "min_new_service_balance"),
     ]
     return InlineKeyboardMarkup(
         inline_keyboard=[

@@ -251,13 +251,15 @@ async def bot_status(callback: CallbackQuery, session: AsyncSession) -> None:
             WalletTransaction.created_at <= end_utc,
         )
     )
+    total_sales_toman = int(total_sales or 0)
+    today_sales_toman = int(today_sales or 0)
 
     await replace_message(
         callback,
         "وضعیت ربات\n\n"
         f"تعداد کاربران: {users or 0:,}\n"
-        f"فروش کل ربات: {total_sales or 0:,} تومان\n"
-        f"درآمد امروز تهران ({start_tehran:%Y-%m-%d} از 00:00 تا 23:59): {today_sales or 0:,} تومان",
+        f"فروش کل ربات: {total_sales_toman:,} تومان\n"
+        f"درآمد امروز تهران ({start_tehran:%Y-%m-%d} از 00:00 تا 23:59): {today_sales_toman:,} تومان",
         reply_markup=admin_menu(),
     )
     await callback.answer()
@@ -492,6 +494,11 @@ def payment_value_label(key: str, value: str | None) -> str:
         return "فعال" if str(value).lower() == "true" else "غیرفعال"
     if key in {"plisio_api_token", "nowpayments_api_token"}:
         return "ثبت شده" if value else "ثبت نشده"
+    if key in {"stars_to_toman_rate", "min_new_service_balance", "low_balance_threshold"} and value:
+        try:
+            return f"{int(str(value).replace(',', '')):,} تومان"
+        except ValueError:
+            return value
     return value or "-"
 
 
@@ -512,6 +519,7 @@ async def payment_settings_section(callback: CallbackQuery, state: FSMContext, s
         "plisio_api_token",
         "nowpayments_api_token",
         "stars_to_toman_rate",
+        "min_new_service_balance",
     ]
     labels = {
         "card_number": "شماره کارت",
@@ -523,6 +531,7 @@ async def payment_settings_section(callback: CallbackQuery, state: FSMContext, s
         "plisio_api_token": "توکن Plisio",
         "nowpayments_api_token": "توکن NOWPayments",
         "stars_to_toman_rate": "نرخ هر استار",
+        "min_new_service_balance": "حداقل موجودی ساخت اکانت",
     }
     lines = [f"{labels[key]}: {payment_value_label(key, values.get(key))}" for key in wanted]
     await replace_message(callback, "\n".join(lines), reply_markup=payment_settings_menu())
@@ -977,7 +986,7 @@ async def add_plan_start(callback: CallbackQuery, state: FSMContext, session: As
         await callback.answer()
         return
     await state.clear()
-    await state.update_data(prompt_message_id=callback.message.message_id)
+    await state.update_data(plan_mode="add", prompt_message_id=callback.message.message_id)
     await state.set_state(AdminState.plan_name)
     await replace_message(callback, "نام تعرفه را وارد کنید.\nمثال: مولتی هوشمند")
     await callback.answer()
@@ -989,17 +998,25 @@ async def plan_name_step(message: Message, state: FSMContext, session: AsyncSess
         await message.answer("دسترسی ندارید.")
         return
     name = (message.text or "").strip()
+    data = await state.get_data()
+    if data.get("plan_mode") == "edit" and name == "-":
+        plan = await session.get(ProductPlan, data["plan_id"])
+        name = plan.name if plan else ""
     if not name:
         await send_step_prompt(message, state, "نام تعرفه نمی‌تواند خالی باشد. دوباره نام را وارد کنید:")
         return
     await state.update_data(plan_name=name)
     await state.set_state(AdminState.plan_description)
+    current = ""
+    if data.get("plan_mode") == "edit":
+        plan = await session.get(ProductPlan, data["plan_id"])
+        current = f"\nمقدار فعلی: {plan.description or '-'}\nبرای حفظ مقدار فعلی `-` بفرستید." if plan else ""
     await send_step_prompt(
         message,
         state,
         "توضیحات تعرفه را وارد کنید.\n"
         "این متن بعد از زدن دکمه خرید سرویس به کاربر نمایش داده می‌شود.\n"
-        "مثال: هر گیگ ۹ هزار تومان، مناسب استفاده روزمره",
+        f"مثال: هر گیگ ۹ هزار تومان، مناسب استفاده روزمره{current}",
     )
 
 
@@ -1009,12 +1026,21 @@ async def plan_description_step(message: Message, state: FSMContext, session: As
         await message.answer("دسترسی ندارید.")
         return
     description = (message.text or "").strip()
-    if not description:
+    data = await state.get_data()
+    is_edit = data.get("plan_mode") == "edit"
+    if is_edit and description == "-":
+        plan = await session.get(ProductPlan, data["plan_id"])
+        description = plan.description or "" if plan else ""
+    if not description and not is_edit:
         await send_step_prompt(message, state, "توضیحات نمی‌تواند خالی باشد. دوباره توضیحات را وارد کنید:")
         return
     await state.update_data(plan_description=description)
     await state.set_state(AdminState.plan_price)
-    await send_step_prompt(message, state, "قیمت هر گیگ را به تومان و فقط عددی وارد کنید.\nمثال: 9000")
+    current = ""
+    if data.get("plan_mode") == "edit":
+        plan = await session.get(ProductPlan, data["plan_id"])
+        current = f"\nمقدار فعلی: {plan.price_per_gb_toman:,}\nبرای حفظ مقدار فعلی `-` بفرستید." if plan else ""
+    await send_step_prompt(message, state, f"قیمت هر گیگ را به تومان و فقط عددی وارد کنید.\nمثال: 9000{current}")
 
 
 @router.message(AdminState.plan_price)
@@ -1023,11 +1049,16 @@ async def plan_price_step(message: Message, state: FSMContext, session: AsyncSes
         await message.answer("دسترسی ندارید.")
         return
     raw_price = (message.text or "").replace(",", "").strip()
-    try:
-        price = int(raw_price)
-    except ValueError:
-        await send_step_prompt(message, state, "قیمت باید فقط عدد باشد. مثال: 9000")
-        return
+    data = await state.get_data()
+    if data.get("plan_mode") == "edit" and raw_price == "-":
+        plan = await session.get(ProductPlan, data["plan_id"])
+        price = plan.price_per_gb_toman if plan else 0
+    else:
+        try:
+            price = int(raw_price)
+        except ValueError:
+            await send_step_prompt(message, state, "قیمت باید فقط عدد باشد. مثال: 9000")
+            return
     if price <= 0:
         await send_step_prompt(message, state, "قیمت باید بیشتر از صفر باشد. دوباره وارد کنید:")
         return
@@ -1039,7 +1070,18 @@ async def plan_price_step(message: Message, state: FSMContext, session: AsyncSes
         return
     await state.update_data(plan_price=price)
     await state.set_state(AdminState.plan_panel)
-    await send_step_prompt(message, state, "این تعرفه روی کدام پنل ساخته شود؟", reply_markup=plan_panel_keyboard(panels))
+    current = ""
+    allow_keep_current = data.get("plan_mode") == "edit"
+    if allow_keep_current:
+        plan = await session.get(ProductPlan, data["plan_id"])
+        panel = await session.get(PasarGuardPanel, plan.panel_id) if plan and plan.panel_id else None
+        current = f"\nپنل فعلی: {panel.name if panel else '-'}"
+    await send_step_prompt(
+        message,
+        state,
+        f"این تعرفه روی کدام پنل ساخته شود؟{current}",
+        reply_markup=plan_panel_keyboard(panels, allow_keep_current=allow_keep_current),
+    )
 
 
 @router.callback_query(F.data.startswith("admin_plan_panel:"))
@@ -1051,20 +1093,65 @@ async def plan_panel_step(callback: CallbackQuery, state: FSMContext, session: A
     if not panel or not panel.is_active:
         await callback.answer("پنل پیدا نشد یا غیرفعال است.", show_alert=True)
         return
+    await save_plan_from_state(callback, state, session, panel.id, panel.name)
+
+
+@router.callback_query(F.data == "admin_plan_panel_keep")
+async def plan_panel_keep_current(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    data = await state.get_data()
+    if data.get("plan_mode") != "edit":
+        await callback.answer("این گزینه فقط برای ویرایش است.", show_alert=True)
+        return
+    plan = await session.get(ProductPlan, data.get("plan_id"))
+    if not plan:
+        await state.clear()
+        await replace_message(callback, "تعرفه پیدا نشد.", reply_markup=store_menu())
+        await callback.answer()
+        return
+    panel = await session.get(PasarGuardPanel, plan.panel_id) if plan.panel_id else None
+    await save_plan_from_state(callback, state, session, plan.panel_id, panel.name if panel else "-")
+
+
+async def save_plan_from_state(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+    panel_id: int | None,
+    panel_name: str,
+) -> None:
     data = await state.get_data()
     required = {"plan_name", "plan_description", "plan_price"}
     if not required.issubset(data):
         await state.clear()
-        await replace_message(callback, "اطلاعات تعرفه کامل نیست. لطفاً دوباره افزودن تعرفه را شروع کنید.", reply_markup=store_menu())
+        await replace_message(callback, "اطلاعات تعرفه کامل نیست. لطفاً دوباره شروع کنید.", reply_markup=store_menu())
         await callback.answer()
         return
     try:
-        plan = await CatalogService(session).add_plan(
-            name=data["plan_name"],
-            description=data["plan_description"],
-            price_per_gb_toman=data["plan_price"],
-            panel_id=panel.id,
-        )
+        if data.get("plan_mode") == "edit":
+            plan = await session.get(ProductPlan, data["plan_id"])
+            if not plan:
+                await state.clear()
+                await replace_message(callback, "تعرفه پیدا نشد.", reply_markup=store_menu())
+                await callback.answer()
+                return
+            plan.name = data["plan_name"]
+            plan.description = data["plan_description"] or None
+            plan.price_per_gb_toman = data["plan_price"]
+            plan.panel_id = panel_id
+            success_text = "تعرفه با موفقیت بروزرسانی شد."
+            answer_text = "تعرفه بروزرسانی شد."
+        else:
+            plan = await CatalogService(session).add_plan(
+                name=data["plan_name"],
+                description=data["plan_description"],
+                price_per_gb_toman=data["plan_price"],
+                panel_id=panel_id,
+            )
+            success_text = "تعرفه با موفقیت اضافه شد."
+            answer_text = "تعرفه اضافه شد."
     except Exception as exc:
         await session.rollback()
         await state.clear()
@@ -1074,13 +1161,13 @@ async def plan_panel_step(callback: CallbackQuery, state: FSMContext, session: A
     await state.clear()
     await replace_message(
         callback,
-        f"تعرفه با موفقیت اضافه شد.\n\n"
+        f"{success_text}\n\n"
         f"#{plan.id} {plan.name}\n"
-        f"پنل: {panel.name}\n"
+        f"پنل: {panel_name}\n"
         f"قیمت هر گیگ: {plan.price_per_gb_toman:,} تومان",
         reply_markup=store_menu(),
     )
-    await callback.answer("تعرفه اضافه شد.")
+    await callback.answer(answer_text)
 
 
 @router.callback_query(F.data == "admin_plan:list")
@@ -1115,49 +1202,22 @@ async def edit_plan_start(callback: CallbackQuery, state: FSMContext, session: A
     if not plan:
         await callback.answer("تعرفه پیدا نشد.", show_alert=True)
         return
-    await state.update_data(plan_id=plan.id)
-    await state.set_state(AdminState.edit_plan)
-    await callback.message.answer(
-        "اطلاعات فعلی تعرفه:\n"
-        f"نام: {plan.name}\n"
-        f"توضیحات: {plan.description or '-'}\n"
-        f"قیمت هر گیگ: {plan.price_per_gb_toman}\n"
-        f"شناسه پنل: {plan.panel_id or ''}\n\n"
-        "اطلاعات جدید را ارسال کنید:\n"
-        "نام تعرفه | توضیحات | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)"
+    await state.clear()
+    await state.update_data(plan_mode="edit", plan_id=plan.id, prompt_message_id=callback.message.message_id)
+    await state.set_state(AdminState.plan_name)
+    await replace_message(
+        callback,
+        "نام تعرفه را وارد کنید.\n"
+        f"مقدار فعلی: {plan.name}\n"
+        "برای حفظ مقدار فعلی `-` بفرستید.",
     )
     await callback.answer()
 
 
 @router.message(AdminState.edit_plan)
 async def edit_plan_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    if not await is_admin(session, message.from_user.id):
-        await message.answer("دسترسی ندارید.")
-        return
-    plan = await session.get(ProductPlan, (await state.get_data())["plan_id"])
-    if not plan:
-        await message.answer("تعرفه پیدا نشد.")
-        await state.clear()
-        return
-    parts = [part.strip() for part in (message.text or "").split("|")]
-    if len(parts) not in {3, 4}:
-        await message.answer("فرمت درست: نام تعرفه | توضیحات | قیمت هر گیگ به تومان | شناسه پنل (اختیاری)")
-        return
-    try:
-        price = int(parts[2].replace(",", ""))
-        panel_id = int(parts[3]) if len(parts) == 4 and parts[3] else None
-    except ValueError:
-        await message.answer("قیمت و شناسه پنل باید عددی باشند.")
-        return
-    if panel_id and not await session.get(PasarGuardPanel, panel_id):
-        await message.answer("پنل پیدا نشد.")
-        return
-    plan.name = parts[0]
-    plan.description = parts[1]
-    plan.price_per_gb_toman = price
-    plan.panel_id = panel_id
     await state.clear()
-    await message.answer(f"تعرفه بروزرسانی شد: #{plan.id} {plan.name}")
+    await message.answer("فرم قدیمی ویرایش حذف شده است. دوباره از دکمه ویرایش تعرفه شروع کنید.", reply_markup=store_menu())
 
 
 @router.callback_query(F.data.startswith("admin_plan_enable:"))
@@ -1355,6 +1415,7 @@ async def admin_set_start(callback: CallbackQuery, state: FSMContext, session: A
         "plisio_api_token": "توکن Plisio",
         "nowpayments_api_token": "توکن NOWPayments",
         "stars_to_toman_rate": "نرخ هر استار",
+        "min_new_service_balance": "حداقل موجودی ساخت اکانت",
         "low_balance_threshold": "حد هشدار کمبود موجودی",
         "referral_cashback_percent": "درصد کش‌بک معرفی",
     }
@@ -1438,9 +1499,16 @@ async def admin_set_value(message: Message, state: FSMContext, session: AsyncSes
     key = data["setting_key"]
     service = SettingsService(session)
     value = (message.text or "").strip()
-    if key == "stars_to_toman_rate" and (not value.isdigit() or int(value) <= 0):
-        await message.answer("نرخ هر استار باید عددی و بیشتر از صفر باشد.")
+    normalized_value = value.replace(",", "")
+    positive_number_keys = {
+        "stars_to_toman_rate": "نرخ هر استار",
+        "min_new_service_balance": "حداقل موجودی ساخت اکانت",
+    }
+    if key in positive_number_keys and (not normalized_value.isdigit() or int(normalized_value) <= 0):
+        await message.answer(f"{positive_number_keys[key]} باید عددی و بیشتر از صفر باشد.")
         return
+    if key in positive_number_keys:
+        value = normalized_value
     await service.set(key, value)
     await state.clear()
     await message.answer("ذخیره شد.")
