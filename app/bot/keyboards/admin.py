@@ -5,7 +5,11 @@ from app.services.menu import COLOR_LABELS
 
 
 def menu_label(button: dict) -> str:
-    return str(button.get("label") or "").replace("{support_username}", env_settings.support_username)
+    text = str(button.get("label") or "").replace("{support_username}", env_settings.support_username)
+    icon_text = str(button.get("icon_text") or "").strip()
+    if icon_text and not text.startswith(icon_text):
+        return f"{icon_text} {text}"
+    return text
 
 
 def admin_menu() -> InlineKeyboardMarkup:

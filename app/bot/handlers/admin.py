@@ -250,6 +250,7 @@ async def button_detail(callback: CallbackQuery, session: AsyncSession) -> None:
         f"متن فعلی: {button.get('label', '-')}\n"
         f"رنگ: {COLOR_LABELS.get(button.get('color'), 'بدون رنگ')}\n"
         f"ایموجی پریمیوم: {button.get('icon_custom_emoji_id') or '-'}\n"
+        f"نمایش کنار متن: {button.get('icon_text') or '-'}\n"
         f"وضعیت: {'نمایش داده می‌شود' if button.get('visible', True) else 'مخفی است'}\n"
         f"جایگاه: ردیف {index // 2 + 1}، ستون {index % 2 + 1}\n\n"
         "چیدمان فعلی:\n"
@@ -273,6 +274,7 @@ async def replace_with_button_detail(callback: CallbackQuery, session: AsyncSess
         f"متن فعلی: {button.get('label', '-')}\n"
         f"رنگ: {COLOR_LABELS.get(button.get('color'), 'بدون رنگ')}\n"
         f"ایموجی پریمیوم: {button.get('icon_custom_emoji_id') or '-'}\n"
+        f"نمایش کنار متن: {button.get('icon_text') or '-'}\n"
         f"وضعیت: {'نمایش داده می‌شود' if button.get('visible', True) else 'مخفی است'}\n"
         f"جایگاه: ردیف {index // 2 + 1}، ستون {index % 2 + 1}\n\n"
         "چیدمان فعلی:\n"
@@ -353,7 +355,7 @@ async def button_icon_start(callback: CallbackQuery, state: FSMContext, session:
         callback,
         "خود ایموجی پریمیوم یا شناسه custom emoji را ارسال کنید.\n"
         "برای حذف ایموجی، `-` بفرستید.\n"
-        "این مقدار در فیلد رسمی `icon_custom_emoji_id` ذخیره می‌شود.",
+        "اگر خود ایموجی را بفرستید، جلوی متن دکمه هم نمایش داده می‌شود.",
     )
     await callback.answer()
 
@@ -364,13 +366,17 @@ async def button_icon_save(message: Message, state: FSMContext, session: AsyncSe
         await message.answer("دسترسی ندارید.")
         return
     icon = (message.text or "").strip()
+    icon_text = ""
     for entity in message.entities or []:
         if entity.type == "custom_emoji" and entity.custom_emoji_id:
             icon = entity.custom_emoji_id
+            icon_text = (message.text or "").strip()
             break
-    icon = "" if icon == "-" else icon
+    if icon == "-":
+        icon = ""
+        icon_text = ""
     data = await state.get_data()
-    await MenuService(session).set_icon(data["menu_button_action"], icon)
+    await MenuService(session).set_icon(data["menu_button_action"], icon, icon_text)
     await cleanup_step_prompt(message, state)
     await state.clear()
     await message.answer(
