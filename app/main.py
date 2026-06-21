@@ -2,8 +2,6 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
@@ -21,7 +19,7 @@ async def main() -> None:
     if not settings.bot_token:
         raise RuntimeError("BOT_TOKEN is required")
     redis = Redis.from_url(settings.redis_url)
-    bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot = Bot(settings.bot_token)
     dp = Dispatcher(storage=RedisStorage(redis=redis))
     dp.update.middleware(DbSessionMiddleware())
     dp.include_router(build_router())
@@ -39,4 +37,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
