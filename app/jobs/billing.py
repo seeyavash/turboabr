@@ -9,6 +9,7 @@ from app.db.session import SessionLocal
 from app.integrations.pasarguard import PasarGuardError
 from app.services.catalog import CatalogService
 from app.services.notifications import send_supergroup_message
+from app.services.service_lifecycle import disable_user_active_services
 from app.services.settings import SettingsService
 from app.services.wallet import WalletService
 
@@ -33,6 +34,8 @@ async def sync_traffic_usage(bot: Bot) -> None:
             .where(VpnService.status == ServiceStatus.active.value, VpnService.is_test.is_(False))
         )
         for service, user in result.all():
+            if service.status != ServiceStatus.active.value:
+                continue
             try:
                 panel = await catalog.client_for_panel(service.panel_id)
                 total_mb = await panel.total_used_mb(service.pasarguard_username)
@@ -46,22 +49,13 @@ async def sync_traffic_usage(bot: Bot) -> None:
                         price = plan.price_per_gb_toman
                 cost = cost_for_mb(delta_mb, price)
                 wallet = WalletService(session)
-                paid = await wallet.deduct(
+                await wallet.deduct(
                     user,
                     cost,
                     f"هزینه مصرف ترافیک به مقدار {delta_mb} مگابایت",
                     {"service_id": service.id, "used_mb": delta_mb},
+                    allow_negative=True,
                 )
-                if not paid:
-                    await panel.set_disabled(service.pasarguard_username, True)
-                    service.status = ServiceStatus.disabled.value
-                    service.disabled_at = datetime.now(UTC)
-                    await bot.send_message(
-                        user.telegram_id,
-                        "سرویس شما به دلیل کافی نبودن موجودی کیف پول غیرفعال شد. "
-                        "برای فعال‌سازی مجدد، کیف پول خود را شارژ کنید.",
-                    )
-                    continue
                 await wallet.pay_referral_cashback(user, cost)
                 service.last_traffic_mb = total_mb
                 service.total_billed_mb += delta_mb
@@ -74,6 +68,20 @@ async def sync_traffic_usage(bot: Bot) -> None:
                         raw_total_mb=total_mb,
                     )
                 )
+                if user.wallet_balance_toman <= 0:
+                    disabled = await disable_user_active_services(
+                        session,
+                        bot,
+                        user,
+                        "موجودی کیف پول صفر یا منفی شد و سرویس‌ها غیرفعال شدند.",
+                    )
+                    if disabled:
+                        await bot.send_message(
+                            user.telegram_id,
+                            f"موجودی کیف پول شما {user.wallet_balance_toman:,} تومان شد. "
+                            "سرویس‌های شما غیرفعال شدند. بعد از شارژ و مثبت شدن موجودی، سرویس‌ها خودکار فعال می‌شوند.",
+                        )
+                    continue
                 if user.wallet_balance_toman <= low_threshold:
                     await bot.send_message(
                         user.telegram_id,

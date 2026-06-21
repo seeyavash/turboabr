@@ -1,5 +1,6 @@
 import logging
 
+from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import PaymentMethod
@@ -10,7 +11,7 @@ from app.services.settings import SettingsService
 logger = logging.getLogger(__name__)
 
 
-async def verify_crypto_payments(session: AsyncSession) -> None:
+async def verify_crypto_payments(session: AsyncSession, bot: Bot | None = None) -> None:
     service = PaymentService(session)
     settings = SettingsService(session)
     for payment in await service.pending_provider_payments():
@@ -22,6 +23,6 @@ async def verify_crypto_payments(session: AsyncSession) -> None:
                 token = await settings.get("nowpayments_api_token")
                 paid = await NowPaymentsClient(token or "").is_paid(payment.provider_invoice_id or "")
             if paid:
-                await service.approve(payment, "تایید خودکار توسط درگاه پرداخت")
+                await service.approve(payment, "تایید خودکار توسط درگاه پرداخت", bot=bot)
         except PaymentProviderError:
             logger.exception("Payment provider verification failed for payment %s", payment.id)

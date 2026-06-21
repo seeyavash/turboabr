@@ -1,8 +1,10 @@
+from aiogram import Bot
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import PaymentMethod, PaymentRequest, PaymentStatus, TransactionKind, User
 from app.integrations.payments import NowPaymentsClient, PlisioClient
+from app.services.service_lifecycle import reactivate_user_disabled_services
 from app.services.settings import SettingsService
 from app.services.wallet import WalletService
 
@@ -40,7 +42,7 @@ class PaymentService:
         payment.provider_url = url
         return payment
 
-    async def approve(self, payment: PaymentRequest, admin_note: str | None = None) -> None:
+    async def approve(self, payment: PaymentRequest, admin_note: str | None = None, bot: Bot | None = None) -> None:
         if payment.status == PaymentStatus.approved.value:
             return
         user = await self.session.get(User, payment.user_id)
@@ -55,6 +57,8 @@ class PaymentService:
             f"شارژ کیف پول از طریق {payment.method}",
             {"payment_id": payment.id},
         )
+        if bot:
+            await reactivate_user_disabled_services(self.session, bot, user)
 
     async def reject(self, payment: PaymentRequest, admin_note: str | None = None) -> None:
         payment.status = PaymentStatus.rejected.value

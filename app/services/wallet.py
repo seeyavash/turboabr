@@ -20,10 +20,17 @@ class WalletService:
             )
         )
 
-    async def deduct(self, user: User, amount: int, description: str, metadata: dict | None = None) -> bool:
+    async def deduct(
+        self,
+        user: User,
+        amount: int,
+        description: str,
+        metadata: dict | None = None,
+        allow_negative: bool = False,
+    ) -> bool:
         if amount <= 0:
             return True
-        if user.wallet_balance_toman < amount:
+        if user.wallet_balance_toman < amount and not allow_negative:
             return False
         user.wallet_balance_toman -= amount
         self.session.add(

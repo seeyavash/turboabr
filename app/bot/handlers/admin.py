@@ -34,6 +34,7 @@ from app.services.catalog import CatalogService
 from app.services.menu import ACTION_LABELS, COLOR_LABELS, MenuService
 from app.services.notifications import send_supergroup_message
 from app.services.payments import PaymentService
+from app.services.service_lifecycle import reactivate_user_disabled_services
 from app.services.services import VpnServiceManager
 from app.services.settings import SettingsService
 from app.services.wallet import WalletService
@@ -1425,7 +1426,7 @@ async def approve_receipt(callback: CallbackQuery, session: AsyncSession) -> Non
         return
     payment = await session.get(PaymentRequest, int(callback.data.split(":", 1)[1]))
     if payment:
-        await PaymentService(session).approve(payment, f"تایید شده توسط {callback.from_user.id}")
+        await PaymentService(session).approve(payment, f"تایید شده توسط {callback.from_user.id}", bot=callback.bot)
         user = await session.get(User, payment.user_id)
         if user:
             await callback.bot.send_message(user.telegram_id, f"رسید شما تایید شد. کیف پول به مبلغ {payment.amount_toman:,} تومان شارژ شد.")
@@ -1592,6 +1593,7 @@ async def add_balance(message: Message, session: AsyncSession) -> None:
         await message.answer("کاربر پیدا نشد.")
         return
     await WalletService(session).add(user, int(parts[2]), TransactionKind.admin_adjustment, f"تغییر موجودی توسط ادمین {message.from_user.id}")
+    await reactivate_user_disabled_services(session, message.bot, user)
     await message.answer("موجودی بروزرسانی شد.")
 
 

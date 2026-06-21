@@ -23,6 +23,7 @@ from app.services.notifications import send_supergroup_message, send_supergroup_
 from app.services.catalog import CatalogService
 from app.services.menu import MenuService
 from app.services.payments import PaymentService
+from app.services.service_lifecycle import reactivate_user_disabled_services
 from app.services.services import VpnServiceManager
 from app.services.settings import SettingsService
 from app.services.users import UserService
@@ -438,6 +439,7 @@ async def stars_paid(message: Message, session: AsyncSession) -> None:
     user = await UserService(session).get_or_create(message.from_user)
     amount = int(message.successful_payment.invoice_payload.split(":", 1)[1])
     await WalletService(session).add(user, amount, TransactionKind.deposit, "شارژ کیف پول با استارز تلگرام")
+    await reactivate_user_disabled_services(session, message.bot, user)
     await message.answer(
         f"کیف پول شما به مبلغ {amount:,} تومان شارژ شد.",
         reply_markup=await MenuService(session).reply_markup(),

@@ -36,7 +36,7 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
 
     async def verify_payments_job() -> None:
         async with SessionLocal() as session:
-            await verify_crypto_payments(session)
+            await verify_crypto_payments(session, bot)
             await session.commit()
 
     scheduler.add_job(
