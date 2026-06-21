@@ -1,3 +1,4 @@
+import html
 import re
 import secrets
 import string
@@ -131,9 +132,44 @@ async def send_service_delivery(message: Message, service: VpnService, session: 
     await message.answer("منوی اصلی:", reply_markup=await MenuService(session).reply_markup())
 
 
+async def is_admin_user(session: AsyncSession, telegram_id: int) -> bool:
+    return telegram_id in await SettingsService(session).admin_ids()
+
+
+async def admin_user_info_text(session: AsyncSession, telegram_id: int) -> str | None:
+    user = (await session.execute(select(User).where(User.telegram_id == telegram_id))).scalar_one_or_none()
+    if not user:
+        return None
+    result = await session.execute(select(VpnService).where(VpnService.user_id == user.id))
+    services = list(result.scalars())
+    active_count = len([service for service in services if service.status == ServiceStatus.active.value])
+    disabled_count = len([service for service in services if service.status == ServiceStatus.disabled.value])
+    return (
+        f"کاربر: {user.telegram_id}\n"
+        f"نام: {user.full_name or '-'}\n"
+        f"یوزرنیم: @{user.username or '-'}\n"
+        f"موجودی: {user.wallet_balance_toman:,} تومان\n"
+        f"سرویس‌ها: {len(services)} کل، {active_count} فعال، {disabled_count} غیرفعال\n"
+        f"اکانت تست گرفته: {'بله' if user.has_test_account else 'خیر'}\n"
+        f"مسدود: {'بله' if user.is_blocked else 'خیر'}"
+    )
+
+
 @router.message(CommandStart())
 async def start(message: Message, session: AsyncSession) -> None:
     referral_code = message.text.split(maxsplit=1)[1] if message.text and len(message.text.split()) > 1 else None
+    if referral_code and referral_code.startswith("admin_user_"):
+        if not await is_admin_user(session, message.from_user.id):
+            await message.answer("دسترسی ندارید.")
+            return
+        try:
+            target_telegram_id = int(referral_code.removeprefix("admin_user_"))
+        except ValueError:
+            await message.answer("لینک اطلاعات کاربر معتبر نیست.")
+            return
+        text = await admin_user_info_text(session, target_telegram_id)
+        await message.answer(text or "کاربر پیدا نشد.")
+        return
     existed = (await session.execute(select(User).where(User.telegram_id == message.from_user.id))).scalar_one_or_none()
     user = await UserService(session).get_or_create(message.from_user, referral_code)
     is_new_user = bool(getattr(user, "_was_created", not existed))
@@ -533,7 +569,22 @@ async def receive_receipt(message: Message, state: FSMContext, session: AsyncSes
     payment.status = PaymentStatus.pending.value
     from app.bot.keyboards.admin import receipt_review
 
-    caption = f"رسید #{payment.id}\nکاربر: {message.from_user.id}\nمبلغ: {payment.amount_toman:,} تومان"
+    user = await session.get(User, payment.user_id)
+    bot = await message.bot.get_me()
+    target_telegram_id = user.telegram_id if user else message.from_user.id
+    username = f"@{user.username}" if user and user.username else "-"
+    full_name = user.full_name if user and user.full_name else "-"
+    wallet_balance = user.wallet_balance_toman if user else 0
+    user_info_link = f"https://t.me/{bot.username}?start=admin_user_{target_telegram_id}"
+    caption = (
+        f"رسید #{payment.id}\n"
+        f"کاربر: {target_telegram_id}\n"
+        f"یوزرنیم: {html.escape(username)}\n"
+        f"نام کاربر: {html.escape(full_name)}\n"
+        f"موجودی کیف پول: {wallet_balance:,} تومان\n"
+        f"مبلغ: {payment.amount_toman:,} تومان\n"
+        f'<a href="{user_info_link}">مشاهده اطلاعات کاربر</a>'
+    )
     sent_to_group = await send_supergroup_photo(
         session,
         message.bot,
@@ -541,6 +592,7 @@ async def receive_receipt(message: Message, state: FSMContext, session: AsyncSes
         payment.receipt_file_id,
         caption,
         reply_markup=receipt_review(payment.id),
+        parse_mode="HTML",
     )
     if not sent_to_group:
         admins = await SettingsService(session).admin_ids()
@@ -550,6 +602,7 @@ async def receive_receipt(message: Message, state: FSMContext, session: AsyncSes
                 payment.receipt_file_id,
                 caption=caption,
                 reply_markup=receipt_review(payment.id),
+                parse_mode="HTML",
             )
     await clear_flow_messages(message, state)
     await state.clear()
