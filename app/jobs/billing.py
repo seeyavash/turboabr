@@ -29,7 +29,7 @@ async def sync_traffic_usage(bot: Bot) -> None:
         result = await session.execute(
             select(VpnService, User)
             .join(User, User.id == VpnService.user_id)
-            .where(VpnService.status == ServiceStatus.active.value)
+            .where(VpnService.status == ServiceStatus.active.value, VpnService.is_test.is_(False))
         )
         for service, user in result.all():
             try:
