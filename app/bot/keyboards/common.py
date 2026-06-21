@@ -29,10 +29,12 @@ def service_types(plans: list[ProductPlan]) -> InlineKeyboardMarkup:
 def user_services_keyboard(services) -> InlineKeyboardMarkup:
     rows = []
     for service in services:
+        username = service.pasarguard_username or f"سرویس #{service.id}"
+        title = username if len(username) <= 36 else f"{username[:33]}..."
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"سرویس #{service.id} | {service.type}",
+                    text=title,
                     callback_data=f"svc_view:{service.id}",
                 )
             ]
