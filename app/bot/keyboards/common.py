@@ -15,6 +15,7 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
+def service_types(plans: list[ProductPlan]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
