@@ -46,14 +46,26 @@ ACTION_LABELS = {
 
 
 def normalize_buttons(buttons: list[dict]) -> list[dict]:
-    by_action = {button.get("action"): button for button in buttons if button.get("action")}
+    defaults = {button["action"]: button for button in DEFAULT_MENU_BUTTONS}
+    seen = set()
     normalized = []
-    for default in DEFAULT_MENU_BUTTONS:
-        current = {**default, **by_action.get(default["action"], {})}
+
+    for button in buttons:
+        action = button.get("action")
+        if action not in defaults or action in seen:
+            continue
+        seen.add(action)
+        current = {**defaults[action], **button}
         current["color"] = current.get("color") if current.get("color") in BUTTON_STYLES else "none"
         current["icon_custom_emoji_id"] = str(current.get("icon_custom_emoji_id") or "")
         current["visible"] = bool(current.get("visible", True))
         normalized.append(current)
+
+    for default in DEFAULT_MENU_BUTTONS:
+        if default["action"] in seen:
+            continue
+        normalized.append(default.copy())
+
     return normalized
 
 
