@@ -295,11 +295,38 @@ def admin_service_actions(service_id: int, disabled: bool) -> InlineKeyboardMark
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def admin_user_service_actions(service_id: int, user_id: int, disabled: bool) -> InlineKeyboardMarkup:
+    rows = []
+    if disabled:
+        rows.append([InlineKeyboardButton(text="فعال‌سازی مجدد", callback_data=f"admin_svc_reactivate:{service_id}")])
+    else:
+        rows.append([InlineKeyboardButton(text="غیرفعال کردن", callback_data=f"admin_svc_disable:{service_id}")])
+    rows.append([InlineKeyboardButton(text="حذف سرویس", callback_data=f"admin_svc_delete:{service_id}")])
+    rows.append([InlineKeyboardButton(text="بازگشت به لیست سرویس‌ها", callback_data=f"admin_user_services:{user_id}")])
+    rows.append([InlineKeyboardButton(text="بازگشت به اطلاعات کاربر", callback_data=f"admin_user_info:{user_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_user_services_keyboard(user_id: int, services) -> InlineKeyboardMarkup:
+    rows = []
+    for service in services:
+        label = service.pasarguard_username or f"سرویس #{service.id}"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"admin_user_service:{service.id}")])
+    rows.append([InlineKeyboardButton(text="بازگشت به اطلاعات کاربر", callback_data=f"admin_user_info:{user_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def admin_user_actions(user_id: int, blocked: bool) -> InlineKeyboardMarkup:
     text = "رفع مسدودی کاربر" if blocked else "مسدود کردن کاربر فیک"
     action = "unblock" if blocked else "block"
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="لیست سرویس‌ها", callback_data=f"admin_user_services:{user_id}")],
+            [InlineKeyboardButton(text="پاک کردن کل سرویس‌ها", callback_data=f"admin_user_delete_services:{user_id}")],
+            [
+                InlineKeyboardButton(text="افزایش موجودی", callback_data=f"admin_user_wallet:add:{user_id}"),
+                InlineKeyboardButton(text="کاهش موجودی", callback_data=f"admin_user_wallet:remove:{user_id}"),
+            ],
             [InlineKeyboardButton(text=text, callback_data=f"admin_user_{action}:{user_id}")],
             [InlineKeyboardButton(text="بازگشت", callback_data="admin:user_services")],
         ]

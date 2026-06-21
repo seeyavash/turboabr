@@ -14,6 +14,8 @@ from app.bot.keyboards.admin import (
     admin_id_actions,
     admin_service_actions,
     admin_user_actions,
+    admin_user_service_actions,
+    admin_user_services_keyboard,
     admins_menu,
     broadcast_pin_keyboard,
     broadcast_restart_keyboard,
@@ -1346,6 +1348,43 @@ async def send_admin_user_info(message: Message, session: AsyncSession, telegram
     )
 
 
+async def replace_with_admin_user_info(callback: CallbackQuery, session: AsyncSession, user_id: int) -> None:
+    user = await session.get(User, user_id)
+    if not user:
+        await replace_message(callback, "کاربر پیدا نشد.", reply_markup=user_services_menu())
+        return
+    result = await session.execute(select(VpnService).where(VpnService.user_id == user.id))
+    services = list(result.scalars())
+    active_count = len([service for service in services if service.status == ServiceStatus.active.value])
+    disabled_count = len([service for service in services if service.status == ServiceStatus.disabled.value])
+    await replace_message(
+        callback,
+        f"کاربر: {user.telegram_id}\n"
+        f"نام: {user.full_name or '-'}\n"
+        f"یوزرنیم: @{user.username or '-'}\n"
+        f"موجودی: {user.wallet_balance_toman:,} تومان\n"
+        f"سرویس‌ها: {len(services)} کل، {active_count} فعال، {disabled_count} غیرفعال\n"
+        f"اکانت تست گرفته: {'بله' if user.has_test_account else 'خیر'}\n"
+        f"مسدود: {'بله' if user.is_blocked else 'خیر'}",
+        reply_markup=admin_user_actions(user.id, user.is_blocked),
+    )
+
+
+def admin_service_detail_text(service: VpnService) -> str:
+    return (
+        f"سرویس #{service.id}\n"
+        f"نام اکانت: {service.pasarguard_username}\n"
+        f"نوع: {service.type}\n"
+        f"وضعیت: {status_label(service.status)}\n"
+        f"تست: {'بله' if service.is_test else 'خیر'}\n"
+        f"مصرف محاسبه‌شده: {service.total_billed_mb:,} مگابایت\n"
+        f"آخرین مصرف ثبت‌شده پنل: {service.last_traffic_mb:,} مگابایت\n"
+        f"شناسه پنل: {service.panel_id or '-'}\n"
+        f"شناسه تعرفه: {service.plan_id or '-'}\n"
+        f"لینک: {service.subscription_url or '-'}"
+    )
+
+
 @router.message(AdminState.user_lookup)
 async def user_lookup_state(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, message.from_user.id):
@@ -1353,6 +1392,163 @@ async def user_lookup_state(message: Message, state: FSMContext, session: AsyncS
         return
     await send_admin_user_info(message, session, int((message.text or "").strip()))
     await state.clear()
+
+
+@router.callback_query(F.data.startswith("admin_user_info:"))
+async def admin_user_info_callback(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    await replace_with_admin_user_info(callback, session, int(callback.data.split(":", 1)[1]))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_user_services:"))
+async def admin_user_services(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    user = await session.get(User, int(callback.data.split(":", 1)[1]))
+    if not user:
+        await replace_message(callback, "کاربر پیدا نشد.", reply_markup=user_services_menu())
+        await callback.answer()
+        return
+    result = await session.execute(
+        select(VpnService)
+        .where(VpnService.user_id == user.id, VpnService.status != ServiceStatus.deleted.value)
+        .order_by(VpnService.id)
+    )
+    services = list(result.scalars())
+    if not services:
+        await replace_message(callback, "این کاربر سرویس فعالی ندارد.", reply_markup=admin_user_actions(user.id, user.is_blocked))
+        await callback.answer()
+        return
+    await replace_message(
+        callback,
+        f"سرویس‌های کاربر {user.telegram_id}:",
+        reply_markup=admin_user_services_keyboard(user.id, services),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_user_service:"))
+async def admin_user_service_detail(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    service = await session.get(VpnService, int(callback.data.split(":", 1)[1]))
+    if not service or service.status == ServiceStatus.deleted.value:
+        await callback.answer("سرویس پیدا نشد.", show_alert=True)
+        return
+    await replace_message(
+        callback,
+        admin_service_detail_text(service),
+        reply_markup=admin_user_service_actions(service.id, service.user_id, service.status == ServiceStatus.disabled.value),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_user_delete_services:"))
+async def admin_user_delete_services(callback: CallbackQuery, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    user = await session.get(User, int(callback.data.split(":", 1)[1]))
+    if not user:
+        await callback.answer("کاربر پیدا نشد.", show_alert=True)
+        return
+    result = await session.execute(
+        select(VpnService).where(
+            VpnService.user_id == user.id,
+            VpnService.status != ServiceStatus.deleted.value,
+        )
+    )
+    deleted = 0
+    failed = 0
+    for service in result.scalars():
+        try:
+            panel = await CatalogService(session).client_for_panel(service.panel_id)
+            await VpnServiceManager(session, panel).delete(service)
+            deleted += 1
+        except Exception:
+            failed += 1
+    await send_supergroup_message(
+        session,
+        callback.bot,
+        "account_changes",
+        f"ادمین همه سرویس‌های کاربر را حذف کرد\n"
+        f"ادمین: {callback.from_user.id}\n"
+        f"کاربر: {user.telegram_id}\n"
+        f"حذف‌شده: {deleted}\n"
+        f"ناموفق: {failed}",
+    )
+    await replace_with_admin_user_info(callback, session, user.id)
+    await callback.answer(f"{deleted} سرویس حذف شد." if not failed else f"{deleted} حذف شد، {failed} ناموفق.")
+
+
+@router.callback_query(F.data.startswith("admin_user_wallet:"))
+async def admin_user_wallet_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    _, action, user_id = callback.data.split(":", 2)
+    user = await session.get(User, int(user_id))
+    if not user:
+        await callback.answer("کاربر پیدا نشد.", show_alert=True)
+        return
+    await state.clear()
+    await state.update_data(wallet_user_id=user.id, wallet_action=action)
+    await state.set_state(AdminState.wallet_adjust)
+    label = "افزایش" if action == "add" else "کاهش"
+    await replace_message(
+        callback,
+        f"مبلغ {label} موجودی را به تومان وارد کنید.\n"
+        f"کاربر: {user.telegram_id}\n"
+        f"موجودی فعلی: {user.wallet_balance_toman:,} تومان",
+    )
+    await callback.answer()
+
+
+@router.message(AdminState.wallet_adjust)
+async def admin_user_wallet_save(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    amount_text = (message.text or "").replace(",", "").strip()
+    if not amount_text.isdigit() or int(amount_text) <= 0:
+        await message.answer("مبلغ باید عددی و بیشتر از صفر باشد.")
+        return
+    data = await state.get_data()
+    user = await session.get(User, data.get("wallet_user_id"))
+    if not user:
+        await state.clear()
+        await message.answer("کاربر پیدا نشد.")
+        return
+    amount = int(amount_text)
+    action = data.get("wallet_action")
+    if action == "add":
+        await WalletService(session).add(
+            user,
+            amount,
+            TransactionKind.admin_adjustment,
+            f"افزایش موجودی توسط ادمین {message.from_user.id}",
+            {"admin_id": message.from_user.id},
+        )
+        await reactivate_user_disabled_services(session, message.bot, user)
+        text = f"{amount:,} تومان به موجودی کاربر اضافه شد."
+    else:
+        deducted = min(user.wallet_balance_toman, amount)
+        await WalletService(session).deduct(
+            user,
+            deducted,
+            f"کاهش موجودی توسط ادمین {message.from_user.id}",
+            {"admin_id": message.from_user.id},
+            kind=TransactionKind.admin_adjustment,
+        )
+        text = f"{deducted:,} تومان از موجودی کاربر کم شد."
+    await state.clear()
+    await message.answer(text)
+    await send_admin_user_info(message, session, user.telegram_id)
 
 
 @router.callback_query(F.data == "admin:users")
@@ -1596,6 +1792,11 @@ async def admin_disable_service(callback: CallbackQuery, session: AsyncSession) 
             "account_changes",
             f"ادمین سرویس را غیرفعال کرد\nادمین: {callback.from_user.id}\nاکانت: {service.pasarguard_username}",
         )
+        await replace_message(
+            callback,
+            admin_service_detail_text(service),
+            reply_markup=admin_user_service_actions(service.id, service.user_id, True),
+        )
     await callback.answer("غیرفعال شد.")
 
 
@@ -1614,6 +1815,11 @@ async def admin_reactivate_service(callback: CallbackQuery, session: AsyncSessio
             "orders",
             f"ادمین سرویس را فعال کرد\nادمین: {callback.from_user.id}\nاکانت: {service.pasarguard_username}",
         )
+        await replace_message(
+            callback,
+            admin_service_detail_text(service),
+            reply_markup=admin_user_service_actions(service.id, service.user_id, False),
+        )
     await callback.answer("فعال شد.")
 
 
@@ -1624,6 +1830,7 @@ async def admin_delete_service(callback: CallbackQuery, session: AsyncSession) -
         return
     service = await session.get(VpnService, int(callback.data.split(":", 1)[1]))
     if service:
+        user_id = service.user_id
         panel = await CatalogService(session).client_for_panel(service.panel_id)
         await VpnServiceManager(session, panel).delete(service)
         await send_supergroup_message(
@@ -1631,6 +1838,12 @@ async def admin_delete_service(callback: CallbackQuery, session: AsyncSession) -
             callback.bot,
             "account_changes",
             f"ادمین سرویس را حذف کرد\nادمین: {callback.from_user.id}\nاکانت: {service.pasarguard_username}",
+        )
+        user = await session.get(User, user_id)
+        await replace_message(
+            callback,
+            "سرویس حذف شد.",
+            reply_markup=admin_user_actions(user_id, user.is_blocked if user else False),
         )
     await callback.answer("حذف شد.")
 
@@ -1772,6 +1985,7 @@ async def remove_balance(message: Message, session: AsyncSession) -> None:
         amount,
         f"کسر موجودی توسط ادمین {message.from_user.id}",
         {"admin_id": message.from_user.id},
+        kind=TransactionKind.admin_adjustment,
     )
     await message.answer("موجودی بروزرسانی شد.")
 
