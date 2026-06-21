@@ -63,6 +63,23 @@ async def show_main_menu(message: Message, session: AsyncSession, text: str = "�
     await message.answer(text, reply_markup=await MenuService(session).reply_markup())
 
 
+async def safe_delete_message(message: Message) -> None:
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+async def clear_flow_messages(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    for message_id in data.get("flow_message_ids", []):
+        try:
+            await message.bot.delete_message(message.chat.id, message_id)
+        except Exception:
+            pass
+    await state.update_data(flow_message_ids=[])
+
+
 async def user_services_list(user: User, session: AsyncSession) -> list[VpnService]:
     result = await session.execute(
         select(VpnService)
@@ -400,12 +417,14 @@ async def charge_wallet(message: Message, state: FSMContext, session: AsyncSessi
         return
     await state.clear()
     await state.set_state(ChargeWallet.amount)
-    await message.answer("مبلغ شارژ را به تومان وارد کنید:", reply_markup=cancel_reply_keyboard())
+    sent = await message.answer("مبلغ شارژ را به تومان وارد کنید:", reply_markup=cancel_reply_keyboard())
+    await state.update_data(flow_message_ids=[sent.message_id])
 
 
 @router.message(ChargeWallet.amount)
 async def charge_amount(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if (message.text or "").strip() == CANCEL_TEXT:
+        await clear_flow_messages(message, state)
         await state.clear()
         await show_main_menu(message, session)
         return
@@ -417,14 +436,15 @@ async def charge_amount(message: Message, state: FSMContext, session: AsyncSessi
     if amount <= 0:
         await message.answer("مبلغ باید بیشتر از صفر باشد.")
         return
+    await clear_flow_messages(message, state)
     await state.update_data(amount=amount)
     settings = SettingsService(session)
     enabled = set()
     for method in PaymentMethod:
         if await settings.get_bool(f"payment_{method.value}_enabled", method == PaymentMethod.card):
             enabled.add(method.value)
-    await message.answer("روش پرداخت را انتخاب کنید:", reply_markup=cancel_reply_keyboard())
-    await message.answer("یکی از روش‌های پرداخت را بزنید:", reply_markup=payment_methods(enabled))
+    sent = await message.answer("روش پرداخت را انتخاب کنید:", reply_markup=payment_methods(enabled))
+    await state.update_data(flow_message_ids=[sent.message_id])
 
 
 @router.callback_query(F.data.startswith("pay:"))
@@ -434,15 +454,21 @@ async def payment_method_selected(callback: CallbackQuery, state: FSMContext, se
     method = PaymentMethod(callback.data.split(":", 1)[1])
     settings = SettingsService(session)
     payments = PaymentService(session)
+    await safe_delete_message(callback.message)
+    await state.update_data(flow_message_ids=[])
     if method == PaymentMethod.card:
         payment = await payments.create_card_request(user, amount)
         card = await settings.get("card_number", "")
         holder = await settings.get("card_holder", "")
-        await callback.message.answer(
-            f"مبلغ {amount:,} تومان را به کارت زیر واریز کنید:\nشماره کارت: {card}\nنام صاحب کارت: {holder}",
-            reply_markup=receipt_button(payment.id),
+        sent = await callback.message.answer(
+            f"مبلغ {amount:,} تومان را به کارت زیر واریز کنید:\n\n"
+            f"شماره کارت:\n{card}\n\n"
+            f"نام صاحب کارت:\n{holder}",
+            reply_markup=receipt_button(payment.id, card or ""),
         )
+        await state.update_data(flow_message_ids=[sent.message_id])
     elif method == PaymentMethod.stars:
+        await state.clear()
         rate = await settings.get_int("stars_to_toman_rate", 1000)
         prices = [LabeledPrice(label="شارژ کیف پول", amount=max(1, amount // rate))]
         await callback.message.answer_invoice(
@@ -453,6 +479,7 @@ async def payment_method_selected(callback: CallbackQuery, state: FSMContext, se
             prices=prices,
         )
     else:
+        await state.clear()
         payment = await payments.create_crypto_request(user, amount, method)
         await callback.message.answer(f"لینک پرداخت:\n{payment.provider_url}")
     await callback.answer()
@@ -460,9 +487,12 @@ async def payment_method_selected(callback: CallbackQuery, state: FSMContext, se
 
 @router.callback_query(F.data.startswith("receipt:"))
 async def ask_receipt(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        await callback.message.edit_text("لطفاً تصویر رسید پرداخت را ارسال کنید.")
+    except Exception:
+        await callback.message.answer("لطفاً تصویر رسید پرداخت را ارسال کنید.", reply_markup=cancel_reply_keyboard())
     await state.update_data(payment_id=int(callback.data.split(":", 1)[1]))
     await state.set_state(ChargeWallet.receipt)
-    await callback.message.answer("لطفاً تصویر رسید پرداخت را ارسال کنید.", reply_markup=cancel_reply_keyboard())
     await callback.answer()
 
 
@@ -494,6 +524,7 @@ async def receive_receipt(message: Message, state: FSMContext, session: AsyncSes
                 caption=caption,
                 reply_markup=receipt_review(payment.id),
             )
+    await clear_flow_messages(message, state)
     await state.clear()
     await message.answer("رسید شما برای بررسی ادمین ارسال شد.", reply_markup=await MenuService(session).reply_markup())
 
@@ -521,6 +552,9 @@ async def support(message: Message) -> None:
 
 @router.callback_query(F.data.in_({"user_cancel", "user_services_back"}))
 async def user_inline_cancel(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if callback.message:
+        await clear_flow_messages(callback.message, state)
+        await safe_delete_message(callback.message)
     await state.clear()
     await callback.message.answer("به منوی اصلی برگشتید.", reply_markup=await MenuService(session).reply_markup())
     await callback.answer()
@@ -529,6 +563,7 @@ async def user_inline_cancel(callback: CallbackQuery, state: FSMContext, session
 @router.message(F.text)
 async def user_menu_dispatch(message: Message, state: FSMContext, session: AsyncSession) -> None:
     if (message.text or "").strip() == CANCEL_TEXT:
+        await clear_flow_messages(message, state)
         await state.clear()
         await show_main_menu(message, session)
         return

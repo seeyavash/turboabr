@@ -78,12 +78,13 @@ def payment_methods(enabled: set[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def receipt_button(payment_id: int) -> InlineKeyboardMarkup:
+def receipt_button(payment_id: int, card_number: str = "") -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text="ارسال رسید", callback_data=f"receipt:{payment_id}")]]
+    if card_number:
+        rows.append([InlineKeyboardButton(text="کپی شماره کارت", copy_text=CopyTextButton(text=card_number))])
+    rows.append([InlineKeyboardButton(text="لغو", callback_data="user_cancel")])
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="ارسال رسید", callback_data=f"receipt:{payment_id}")],
-            [InlineKeyboardButton(text="لغو", callback_data="user_cancel")],
-        ]
+        inline_keyboard=rows
     )
 
 
