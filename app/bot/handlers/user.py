@@ -6,7 +6,16 @@ from aiogram.types import CallbackQuery, LabeledPrice, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.keyboards.common import payment_methods, plan_detail_actions, receipt_button, service_actions, service_types
+from app.bot.keyboards.common import (
+    CANCEL_TEXT,
+    cancel_reply_keyboard,
+    payment_methods,
+    plan_detail_actions,
+    receipt_button,
+    service_actions,
+    service_types,
+    user_services_keyboard,
+)
 from app.core.config import settings as env_settings
 from app.db.models import PaymentMethod, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, User, VpnService
 from app.integrations.pasarguard import PasarGuardError
@@ -33,6 +42,29 @@ def status_label(status: str) -> str:
 class ChargeWallet(StatesGroup):
     amount = State()
     receipt = State()
+
+
+async def show_main_menu(message: Message, session: AsyncSession, text: str = "به منوی اصلی برگشتید.") -> None:
+    await message.answer(text, reply_markup=await MenuService(session).reply_markup())
+
+
+async def user_services_list(user: User, session: AsyncSession) -> list[VpnService]:
+    result = await session.execute(
+        select(VpnService)
+        .where(VpnService.user_id == user.id, VpnService.status != ServiceStatus.deleted.value)
+        .order_by(VpnService.id.desc())
+    )
+    return list(result.scalars())
+
+
+def service_detail_text(service: VpnService) -> str:
+    return (
+        f"سرویس #{service.id}\n"
+        f"نوع: {service.type}\n"
+        f"وضعیت: {status_label(service.status)}\n"
+        f"ترافیک محاسبه‌شده: {service.total_billed_mb} مگابایت\n"
+        f"{service.subscription_url or ''}"
+    )
 
 
 @router.message(CommandStart())
@@ -66,7 +98,8 @@ async def buy_service(message: Message, session: AsyncSession) -> None:
     if not plans:
         await message.answer("فعلاً هیچ تعرفه‌ای برای خرید فعال نیست. لطفاً با پشتیبانی تماس بگیرید.")
         return
-    await message.answer("تعرفه موردنظر را انتخاب کنید:", reply_markup=service_types(plans))
+    await message.answer("تعرفه موردنظر را انتخاب کنید:", reply_markup=cancel_reply_keyboard())
+    await message.answer("یکی از تعرفه‌ها را انتخاب کنید:", reply_markup=service_types(plans))
 
 
 @router.callback_query(F.data.startswith("buy_plan:"))
@@ -144,7 +177,10 @@ async def buy_plan_confirmed(callback: CallbackQuery, session: AsyncSession) -> 
         f"تعرفه: {plan.name}\n"
         f"نام اکانت: {service.pasarguard_username}",
     )
-    await callback.message.answer(f"سرویس شما ساخته شد.\nلینک اشتراک:\n{service.subscription_url}")
+    await callback.message.answer(
+        f"سرویس شما ساخته شد.\nلینک اشتراک:\n{service.subscription_url}",
+        reply_markup=await MenuService(session).reply_markup(),
+    )
     await callback.answer()
 
 
@@ -189,27 +225,46 @@ async def test_account(message: Message, session: AsyncSession) -> None:
         f"آیدی عددی: {user.telegram_id}\n"
         f"نام اکانت: {service.pasarguard_username}",
     )
-    await message.answer(f"اکانت تست شما فعال شد: ۱۰۰ مگابایت، ۱ روز.\n{service.subscription_url}")
+    await message.answer(
+        f"اکانت تست شما فعال شد: ۱۰۰ مگابایت، ۱ روز.\n{service.subscription_url}",
+        reply_markup=await MenuService(session).reply_markup(),
+    )
 
 
 async def my_services(message: Message, session: AsyncSession) -> None:
     user = await UserService(session).get_or_create(message.from_user)
-    result = await session.execute(
-        select(VpnService).where(VpnService.user_id == user.id, VpnService.status != ServiceStatus.deleted.value)
-    )
-    services = list(result.scalars())
+    services = await user_services_list(user, session)
     if not services:
-        await message.answer("هنوز سرویسی ندارید.")
+        await message.answer("هنوز سرویسی ندارید.", reply_markup=await MenuService(session).reply_markup())
         return
-    for service in services:
-        await message.answer(
-            f"سرویس #{service.id}\n"
-            f"نوع: {service.type}\n"
-            f"وضعیت: {status_label(service.status)}\n"
-            f"ترافیک محاسبه‌شده: {service.total_billed_mb} مگابایت\n"
-            f"{service.subscription_url or ''}",
-            reply_markup=service_actions(service.id, service.status == ServiceStatus.disabled.value),
-        )
+    await message.answer("سرویس موردنظر را انتخاب کنید:", reply_markup=cancel_reply_keyboard())
+    await message.answer("لیست سرویس‌های شما:", reply_markup=user_services_keyboard(services))
+
+
+@router.callback_query(F.data == "svc_list_back")
+async def service_list_back(callback: CallbackQuery, session: AsyncSession) -> None:
+    user = await UserService(session).get_or_create(callback.from_user)
+    services = await user_services_list(user, session)
+    if not services:
+        await callback.message.edit_text("هنوز سرویسی ندارید.")
+        await callback.answer()
+        return
+    await callback.message.edit_text("لیست سرویس‌های شما:", reply_markup=user_services_keyboard(services))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("svc_view:"))
+async def service_view(callback: CallbackQuery, session: AsyncSession) -> None:
+    user = await UserService(session).get_or_create(callback.from_user)
+    service = await session.get(VpnService, int(callback.data.split(":", 1)[1]))
+    if not service or service.user_id != user.id or service.status == ServiceStatus.deleted.value:
+        await callback.answer("سرویس پیدا نشد.", show_alert=True)
+        return
+    await callback.message.edit_text(
+        service_detail_text(service),
+        reply_markup=service_actions(service.id, service.status == ServiceStatus.disabled.value),
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("svc_reactivate:"))
@@ -230,7 +285,7 @@ async def reactivate_service(callback: CallbackQuery, session: AsyncSession) -> 
         "orders",
         f"سرویس دوباره فعال شد\nکاربر: {user.telegram_id}\nاکانت: {service.pasarguard_username}",
     )
-    await callback.message.answer("سرویس دوباره فعال شد.")
+    await callback.message.answer("سرویس دوباره فعال شد.", reply_markup=await MenuService(session).reply_markup())
     await callback.answer()
 
 
@@ -249,7 +304,11 @@ async def delete_service(callback: CallbackQuery, session: AsyncSession) -> None
         "account_changes",
         f"کاربر سرویس را حذف کرد\nکاربر: {user.telegram_id}\nاکانت: {service.pasarguard_username}",
     )
-    await callback.message.answer("سرویس حذف شد.")
+    services = await user_services_list(user, session)
+    if services:
+        await callback.message.edit_text("سرویس حذف شد.\nلیست سرویس‌های شما:", reply_markup=user_services_keyboard(services))
+    else:
+        await callback.message.edit_text("سرویس حذف شد.\nدیگر سرویسی ندارید.")
     await callback.answer()
 
 
@@ -269,12 +328,17 @@ async def charge_wallet(message: Message, state: FSMContext, session: AsyncSessi
     if user.is_blocked:
         await message.answer("حساب شما مسدود شده است.")
         return
+    await state.clear()
     await state.set_state(ChargeWallet.amount)
-    await message.answer("مبلغ شارژ را به تومان وارد کنید:")
+    await message.answer("مبلغ شارژ را به تومان وارد کنید:", reply_markup=cancel_reply_keyboard())
 
 
 @router.message(ChargeWallet.amount)
 async def charge_amount(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if (message.text or "").strip() == CANCEL_TEXT:
+        await state.clear()
+        await show_main_menu(message, session)
+        return
     try:
         amount = int((message.text or "").replace(",", "").strip())
     except ValueError:
@@ -289,7 +353,8 @@ async def charge_amount(message: Message, state: FSMContext, session: AsyncSessi
     for method in PaymentMethod:
         if await settings.get_bool(f"payment_{method.value}_enabled", method == PaymentMethod.card):
             enabled.add(method.value)
-    await message.answer("روش پرداخت را انتخاب کنید:", reply_markup=payment_methods(enabled))
+    await message.answer("روش پرداخت را انتخاب کنید:", reply_markup=cancel_reply_keyboard())
+    await message.answer("یکی از روش‌های پرداخت را بزنید:", reply_markup=payment_methods(enabled))
 
 
 @router.callback_query(F.data.startswith("pay:"))
@@ -327,7 +392,7 @@ async def payment_method_selected(callback: CallbackQuery, state: FSMContext, se
 async def ask_receipt(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(payment_id=int(callback.data.split(":", 1)[1]))
     await state.set_state(ChargeWallet.receipt)
-    await callback.message.answer("لطفاً تصویر رسید پرداخت را ارسال کنید.")
+    await callback.message.answer("لطفاً تصویر رسید پرداخت را ارسال کنید.", reply_markup=cancel_reply_keyboard())
     await callback.answer()
 
 
@@ -360,7 +425,7 @@ async def receive_receipt(message: Message, state: FSMContext, session: AsyncSes
                 reply_markup=receipt_review(payment.id),
             )
     await state.clear()
-    await message.answer("رسید شما برای بررسی ادمین ارسال شد.")
+    await message.answer("رسید شما برای بررسی ادمین ارسال شد.", reply_markup=await MenuService(session).reply_markup())
 
 
 @router.pre_checkout_query()
@@ -373,15 +438,29 @@ async def stars_paid(message: Message, session: AsyncSession) -> None:
     user = await UserService(session).get_or_create(message.from_user)
     amount = int(message.successful_payment.invoice_payload.split(":", 1)[1])
     await WalletService(session).add(user, amount, TransactionKind.deposit, "شارژ کیف پول با استارز تلگرام")
-    await message.answer(f"کیف پول شما به مبلغ {amount:,} تومان شارژ شد.")
+    await message.answer(
+        f"کیف پول شما به مبلغ {amount:,} تومان شارژ شد.",
+        reply_markup=await MenuService(session).reply_markup(),
+    )
 
 
 async def support(message: Message) -> None:
     await message.answer(f"پشتیبانی: @{env_settings.support_username}")
 
 
+@router.callback_query(F.data.in_({"user_cancel", "user_services_back"}))
+async def user_inline_cancel(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    await state.clear()
+    await callback.message.answer("به منوی اصلی برگشتید.", reply_markup=await MenuService(session).reply_markup())
+    await callback.answer()
+
+
 @router.message(F.text)
 async def user_menu_dispatch(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if (message.text or "").strip() == CANCEL_TEXT:
+        await state.clear()
+        await show_main_menu(message, session)
+        return
     action = await MenuService(session).action_for_text(message.text or "")
     if action == "buy_service":
         await buy_service(message, session)

@@ -1,20 +1,44 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from app.db.models import PaymentMethod, ProductPlan
 
+CANCEL_TEXT = "منصرف شدم / بازگشت"
+
+
+def cancel_reply_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=CANCEL_TEXT)]],
+        resize_keyboard=True,
+    )
+
 
 def service_types(plans: list[ProductPlan]) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=plan.name,
+                callback_data=f"buy_plan:{plan.id}",
+            )
+        ]
+        for plan in plans
+    ]
+    rows.append([InlineKeyboardButton(text="لغو / بازگشت", callback_data="user_cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def user_services_keyboard(services) -> InlineKeyboardMarkup:
+    rows = []
+    for service in services:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=plan.name,
-                    callback_data=f"buy_plan:{plan.id}",
+                    text=f"سرویس #{service.id} | {service.type}",
+                    callback_data=f"svc_view:{service.id}",
                 )
             ]
-            for plan in plans
-        ]
-    )
+        )
+    rows.append([InlineKeyboardButton(text="بازگشت", callback_data="user_services_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def plan_detail_actions(plan_id: int) -> InlineKeyboardMarkup:
@@ -22,6 +46,7 @@ def plan_detail_actions(plan_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="خرید این سرویس", callback_data=f"buy_plan_confirm:{plan_id}")],
             [InlineKeyboardButton(text="بازگشت به تعرفه‌ها", callback_data="buy_plans_back")],
+            [InlineKeyboardButton(text="لغو / بازگشت", callback_data="user_cancel")],
         ]
     )
 
@@ -37,12 +62,16 @@ def payment_methods(enabled: set[str]) -> InlineKeyboardMarkup:
     for method, label in labels.items():
         if method in enabled:
             rows.append([InlineKeyboardButton(text=label, callback_data=f"pay:{method}")])
+    rows.append([InlineKeyboardButton(text="لغو / بازگشت", callback_data="user_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def receipt_button(payment_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="ارسال رسید", callback_data=f"receipt:{payment_id}")]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text="ارسال رسید", callback_data=f"receipt:{payment_id}")],
+            [InlineKeyboardButton(text="لغو", callback_data="user_cancel")],
+        ]
     )
 
 
@@ -51,4 +80,5 @@ def service_actions(service_id: int, disabled: bool) -> InlineKeyboardMarkup:
     if disabled:
         rows.append([InlineKeyboardButton(text="فعال‌سازی مجدد", callback_data=f"svc_reactivate:{service_id}")])
     rows.append([InlineKeyboardButton(text="حذف سرویس", callback_data=f"svc_delete:{service_id}")])
+    rows.append([InlineKeyboardButton(text="بازگشت به سرویس‌ها", callback_data="svc_list_back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
