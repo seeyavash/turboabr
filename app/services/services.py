@@ -3,21 +3,25 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ProductPlan, ServiceStatus, ServiceType, User, VpnService
+from app.db.models import ProductPlan, ServiceStatus, ServiceType, TransactionKind, User, VpnService
 from app.integrations.pasarguard import PasarGuardClient
 from app.services.settings import SettingsService
+from app.services.wallet import WalletService
 
 
 class VpnServiceManager:
+    creation_fee_toman = 10000
+
     def __init__(self, session: AsyncSession, panel: PasarGuardClient):
         self.session = session
         self.panel = panel
 
     async def create_paid_service(self, user: User, service_type: ServiceType, username: str | None = None) -> VpnService:
         min_balance = await SettingsService(self.session).get_int("min_new_service_balance", 50000)
-        if user.wallet_balance_toman < min_balance:
-            raise ValueError(f"برای خرید سرویس جدید، موجودی کیف پول باید حداقل {min_balance:,} تومان باشد.")
-        return await self._create(
+        required_balance = max(min_balance, self.creation_fee_toman)
+        if user.wallet_balance_toman < required_balance:
+            raise ValueError(f"برای خرید سرویس جدید، موجودی کیف پول باید حداقل {required_balance:,} تومان باشد.")
+        service = await self._create(
             user,
             service_type.value,
             is_test=False,
@@ -27,12 +31,15 @@ class VpnServiceManager:
             panel_id=None,
             username=username,
         )
+        await self._charge_creation_fee(user, service)
+        return service
 
     async def create_paid_plan(self, user: User, plan: ProductPlan, username: str | None = None) -> VpnService:
         min_balance = await SettingsService(self.session).get_int("min_new_service_balance", 50000)
-        if user.wallet_balance_toman < min_balance:
-            raise ValueError(f"برای خرید سرویس جدید، موجودی کیف پول باید حداقل {min_balance:,} تومان باشد.")
-        return await self._create(
+        required_balance = max(min_balance, self.creation_fee_toman)
+        if user.wallet_balance_toman < required_balance:
+            raise ValueError(f"برای خرید سرویس جدید، موجودی کیف پول باید حداقل {required_balance:,} تومان باشد.")
+        service = await self._create(
             user,
             plan.name,
             is_test=False,
@@ -42,6 +49,20 @@ class VpnServiceManager:
             panel_id=plan.panel_id,
             username=username,
         )
+        await self._charge_creation_fee(user, service)
+        return service
+
+    async def _charge_creation_fee(self, user: User, service: VpnService) -> None:
+        wallet = WalletService(self.session)
+        await wallet.deduct(
+            user,
+            self.creation_fee_toman,
+            f"هزینه ساخت اکانت {service.pasarguard_username}",
+            {"service_id": service.id},
+            allow_negative=False,
+            kind=TransactionKind.service_creation_fee,
+        )
+        await wallet.pay_referral_cashback(user, self.creation_fee_toman)
 
     async def create_test_service(self, user: User) -> VpnService:
         if user.has_test_account:

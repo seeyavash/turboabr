@@ -27,6 +27,7 @@ class WalletService:
         description: str,
         metadata: dict | None = None,
         allow_negative: bool = False,
+        kind: TransactionKind = TransactionKind.traffic_charge,
     ) -> bool:
         if amount <= 0:
             return True
@@ -37,7 +38,7 @@ class WalletService:
             WalletTransaction(
                 user_id=user.id,
                 amount_toman=-amount,
-                kind=TransactionKind.traffic_charge.value,
+                kind=kind.value,
                 description=description,
                 metadata_=metadata or {},
             )

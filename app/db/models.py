@@ -40,6 +40,7 @@ class TransactionKind(StrEnum):
     deposit = "deposit"
     admin_adjustment = "admin_adjustment"
     traffic_charge = "traffic_charge"
+    service_creation_fee = "service_creation_fee"
     referral_cashback = "referral_cashback"
 
 
