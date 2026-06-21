@@ -40,15 +40,17 @@ async def start(message: Message, session: AsyncSession) -> None:
     referral_code = message.text.split(maxsplit=1)[1] if message.text and len(message.text.split()) > 1 else None
     existed = (await session.execute(select(User).where(User.telegram_id == message.from_user.id))).scalar_one_or_none()
     user = await UserService(session).get_or_create(message.from_user, referral_code)
-    await send_supergroup_message(
-        session,
-        message.bot,
-        "users",
-        f"{'کاربر جدید' if not existed else 'کاربر'} وارد ربات شد\n"
-        f"نام: {user.full_name or '-'}\n"
-        f"یوزرنیم: @{user.username or '-'}\n"
-        f"آیدی عددی: {user.telegram_id}",
-    )
+    is_new_user = bool(getattr(user, "_was_created", not existed))
+    if is_new_user:
+        await send_supergroup_message(
+            session,
+            message.bot,
+            "users",
+            f"کاربر جدید وارد ربات شد\n"
+            f"نام: {user.full_name or '-'}\n"
+            f"یوزرنیم: @{user.username or '-'}\n"
+            f"آیدی عددی: {user.telegram_id}",
+        )
     await message.answer(
         f"خوش آمدید.\nموجودی کیف پول: {user.wallet_balance_toman:,} تومان",
         reply_markup=await MenuService(session).reply_markup(),

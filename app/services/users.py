@@ -1,5 +1,6 @@
 from aiogram.types import User as TgUser
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import User
@@ -13,6 +14,7 @@ class UserService:
         result = await self.session.execute(select(User).where(User.telegram_id == tg_user.id))
         user = result.scalar_one_or_none()
         if user:
+            user._was_created = False
             user.username = tg_user.username
             user.full_name = tg_user.full_name
             return user
@@ -31,10 +33,19 @@ class UserService:
             full_name=tg_user.full_name,
             referred_by_id=referrer.id if referrer else None,
         )
-        self.session.add(user)
-        await self.session.flush()
-        return user
+        try:
+            async with self.session.begin_nested():
+                self.session.add(user)
+                await self.session.flush()
+            user._was_created = True
+            return user
+        except IntegrityError:
+            result = await self.session.execute(select(User).where(User.telegram_id == tg_user.id))
+            user = result.scalar_one()
+            user._was_created = False
+            user.username = tg_user.username
+            user.full_name = tg_user.full_name
+            return user
 
     async def by_telegram_id(self, telegram_id: int) -> User | None:
         return (await self.session.execute(select(User).where(User.telegram_id == telegram_id))).scalar_one_or_none()
-

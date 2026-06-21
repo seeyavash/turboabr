@@ -23,6 +23,7 @@ from app.bot.keyboards.admin import (
     supergroup_menu,
     menu_button_actions,
     menu_button_color_keyboard,
+    menu_label,
     menu_buttons_keyboard,
     test_panel_keyboard,
     test_settings_menu,
@@ -38,6 +39,16 @@ from app.services.settings import SettingsService
 from app.services.wallet import WalletService
 
 router = Router()
+
+
+def menu_layout_text(buttons: list[dict]) -> str:
+    rows = []
+    for index in range(0, len(buttons), 2):
+        row = []
+        for offset, button in enumerate(buttons[index:index + 2]):
+            row.append(f"{index + offset + 1}. {menu_label(button)}")
+        rows.append(" | ".join(row))
+    return "\n".join(rows)
 
 
 def status_label(status: str) -> str:
@@ -215,7 +226,7 @@ async def buttons_editor(callback: CallbackQuery, state: FSMContext, session: As
     await replace_message(
         callback,
         "ویرایش دکمه‌های منوی کاربر\n"
-        "ترتیب نمایش دقیقاً طبق همین لیست است. هر دکمه را انتخاب کنید.",
+        "چیدمان اینجا مثل منوی کاربر دو ستونه است. یک دکمه را بزنید و با بالا/پایین/چپ/راست جابه‌جا کنید.",
         reply_markup=menu_buttons_keyboard(buttons),
     )
     await callback.answer()
@@ -232,14 +243,18 @@ async def button_detail(callback: CallbackQuery, session: AsyncSession) -> None:
     if not button:
         await callback.answer("دکمه پیدا نشد.", show_alert=True)
         return
+    index = buttons.index(button)
     await replace_message(
         callback,
         f"دکمه: {ACTION_LABELS.get(action, action)}\n"
         f"متن فعلی: {button.get('label', '-')}\n"
         f"رنگ: {COLOR_LABELS.get(button.get('color'), 'بدون رنگ')}\n"
         f"ایموجی پریمیوم: {button.get('icon_custom_emoji_id') or '-'}\n"
-        f"وضعیت: {'نمایش داده می‌شود' if button.get('visible', True) else 'مخفی است'}\n\n"
-        "برای جابه‌جایی از بالا/پایین استفاده کنید.",
+        f"وضعیت: {'نمایش داده می‌شود' if button.get('visible', True) else 'مخفی است'}\n"
+        f"جایگاه: ردیف {index // 2 + 1}، ستون {index % 2 + 1}\n\n"
+        "چیدمان فعلی:\n"
+        f"{menu_layout_text(buttons)}\n\n"
+        "برای جابه‌جایی از بالا/پایین/چپ/راست استفاده کنید.",
         reply_markup=menu_button_actions(button),
     )
     await callback.answer()
@@ -251,14 +266,18 @@ async def replace_with_button_detail(callback: CallbackQuery, session: AsyncSess
     if not button:
         await replace_message(callback, "دکمه پیدا نشد.", reply_markup=menu_buttons_keyboard(buttons))
         return
+    index = buttons.index(button)
     await replace_message(
         callback,
         f"دکمه: {ACTION_LABELS.get(action, action)}\n"
         f"متن فعلی: {button.get('label', '-')}\n"
         f"رنگ: {COLOR_LABELS.get(button.get('color'), 'بدون رنگ')}\n"
         f"ایموجی پریمیوم: {button.get('icon_custom_emoji_id') or '-'}\n"
-        f"وضعیت: {'نمایش داده می‌شود' if button.get('visible', True) else 'مخفی است'}\n\n"
-        "برای جابه‌جایی از بالا/پایین استفاده کنید.",
+        f"وضعیت: {'نمایش داده می‌شود' if button.get('visible', True) else 'مخفی است'}\n"
+        f"جایگاه: ردیف {index // 2 + 1}، ستون {index % 2 + 1}\n\n"
+        "چیدمان فعلی:\n"
+        f"{menu_layout_text(buttons)}\n\n"
+        "برای جابه‌جایی از بالا/پایین/چپ/راست استفاده کنید.",
         reply_markup=menu_button_actions(button),
     )
 
@@ -269,10 +288,9 @@ async def button_move(callback: CallbackQuery, session: AsyncSession) -> None:
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     _, action, direction = callback.data.split(":", 2)
-    await MenuService(session).move(action, int(direction))
-    buttons = await MenuService(session).buttons()
-    await replace_message(callback, "ترتیب دکمه‌ها بروزرسانی شد.", reply_markup=menu_buttons_keyboard(buttons))
-    await callback.answer("جابجا شد.")
+    moved = await MenuService(session).move_grid(action, direction)
+    await replace_with_button_detail(callback, session, action)
+    await callback.answer("جابجا شد." if moved else "از این جهت جایی برای حرکت ندارد.")
 
 
 @router.callback_query(F.data.startswith("admin_button_text:"))

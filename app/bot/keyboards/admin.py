@@ -1,6 +1,11 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from app.core.config import settings as env_settings
 from app.services.menu import COLOR_LABELS
+
+
+def menu_label(button: dict) -> str:
+    return str(button.get("label") or "").replace("{support_username}", env_settings.support_username)
 
 
 def admin_menu() -> InlineKeyboardMarkup:
@@ -198,16 +203,18 @@ def supergroup_menu() -> InlineKeyboardMarkup:
 
 def menu_buttons_keyboard(buttons: list[dict]) -> InlineKeyboardMarkup:
     rows = []
-    for index, button in enumerate(buttons, start=1):
-        status = "✅" if button.get("visible", True) else "🚫"
-        rows.append(
-            [
+    for index in range(0, len(buttons), 2):
+        row = []
+        for offset, button in enumerate(buttons[index:index + 2]):
+            position = index + offset + 1
+            status = "✅" if button.get("visible", True) else "🚫"
+            row.append(
                 InlineKeyboardButton(
-                    text=f"{index}. {status} {button.get('label', '')}",
+                    text=f"{position}. {status} {menu_label(button)}",
                     callback_data=f"admin_button:{button['action']}",
                 )
-            ]
-        )
+            )
+        rows.append(row)
     rows.append([InlineKeyboardButton(text="بازنشانی منو", callback_data="admin_buttons_reset")])
     rows.append([InlineKeyboardButton(text="بازگشت", callback_data="admin:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -218,10 +225,12 @@ def menu_button_actions(button: dict) -> InlineKeyboardMarkup:
     visible_text = "مخفی کردن" if button.get("visible", True) else "نمایش دادن"
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="بالا", callback_data=f"admin_button_move:{action}:up")],
             [
-                InlineKeyboardButton(text="بالا", callback_data=f"admin_button_move:{action}:-1"),
-                InlineKeyboardButton(text="پایین", callback_data=f"admin_button_move:{action}:1"),
+                InlineKeyboardButton(text="چپ", callback_data=f"admin_button_move:{action}:left"),
+                InlineKeyboardButton(text="راست", callback_data=f"admin_button_move:{action}:right"),
             ],
+            [InlineKeyboardButton(text="پایین", callback_data=f"admin_button_move:{action}:down")],
             [InlineKeyboardButton(text="ویرایش متن و ایموجی", callback_data=f"admin_button_text:{action}")],
             [InlineKeyboardButton(text="رنگ", callback_data=f"admin_button_color:{action}")],
             [InlineKeyboardButton(text="ایموجی پریمیوم", callback_data=f"admin_button_icon:{action}")],

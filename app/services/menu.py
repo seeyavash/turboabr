@@ -8,6 +8,7 @@ from app.core.config import settings as env_settings
 from app.services.settings import SettingsService
 
 MENU_BUTTONS_KEY = "user_menu_buttons"
+MENU_COLUMNS = 2
 
 BUTTON_STYLES = {
     "none": None,
@@ -83,6 +84,32 @@ class MenuService:
         buttons[index], buttons[new_index] = buttons[new_index], buttons[index]
         await self.save_buttons(buttons)
 
+    async def move_grid(self, action: str, direction: str) -> bool:
+        buttons = await self.buttons()
+        index = next((i for i, button in enumerate(buttons) if button["action"] == action), None)
+        if index is None:
+            return False
+        column = index % MENU_COLUMNS
+        if direction == "left":
+            if column == 0:
+                return False
+            new_index = index - 1
+        elif direction == "right":
+            if column >= MENU_COLUMNS - 1:
+                return False
+            new_index = index + 1
+        elif direction == "up":
+            new_index = index - MENU_COLUMNS
+        elif direction == "down":
+            new_index = index + MENU_COLUMNS
+        else:
+            return False
+        if new_index < 0 or new_index >= len(buttons):
+            return False
+        buttons[index], buttons[new_index] = buttons[new_index], buttons[index]
+        await self.save_buttons(buttons)
+        return True
+
     async def set_label(self, action: str, label: str) -> None:
         buttons = await self.buttons()
         for button in buttons:
@@ -135,8 +162,8 @@ class MenuService:
     async def reply_markup(self) -> ReplyKeyboardMarkup:
         visible = [button for button in await self.buttons() if button.get("visible", True)]
         rows = []
-        for index in range(0, len(visible), 2):
-            rows.append([self.keyboard_button(button) for button in visible[index:index + 2]])
+        for index in range(0, len(visible), MENU_COLUMNS):
+            rows.append([self.keyboard_button(button) for button in visible[index:index + MENU_COLUMNS]])
         return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
     async def action_for_text(self, text: str) -> str | None:
