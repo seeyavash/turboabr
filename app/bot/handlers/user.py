@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import qrcode
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Message
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards.common import (
@@ -25,7 +25,7 @@ from app.bot.keyboards.common import (
     user_services_keyboard,
 )
 from app.core.config import settings as env_settings
-from app.db.models import PaymentMethod, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, User, VpnService
+from app.db.models import PaymentMethod, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TrafficUsageLog, TransactionKind, User, VpnService
 from app.integrations.pasarguard import PasarGuardError
 from app.services.notifications import send_supergroup_message, send_supergroup_photo
 from app.services.catalog import CatalogService
@@ -413,7 +413,22 @@ async def delete_service(callback: CallbackQuery, session: AsyncSession) -> None
 
 async def wallet(message: Message, session: AsyncSession) -> None:
     user = await UserService(session).get_or_create(message.from_user)
-    await message.answer(f"موجودی کیف پول: {user.wallet_balance_toman:,} تومان")
+    usage = await session.execute(
+        select(
+            func.coalesce(func.sum(TrafficUsageLog.used_mb_delta), 0),
+            func.coalesce(func.sum(TrafficUsageLog.cost_toman), 0),
+        )
+        .join(VpnService, VpnService.id == TrafficUsageLog.service_id)
+        .where(VpnService.user_id == user.id)
+    )
+    total_used_mb, total_cost = usage.one()
+    total_used_gb = float(total_used_mb or 0) / 1024
+    total_used_gb_text = f"{total_used_gb:.3f}".rstrip("0").rstrip(".")
+    await message.answer(
+        f"موجودی کیف پول: {user.wallet_balance_toman:,} تومان\n\n"
+        f"مقدار مصرف کل (GB): {total_used_gb_text}\n\n"
+        f"هزینه تا الان: {int(total_cost or 0):,} تومان"
+    )
 
 
 async def invite(message: Message, session: AsyncSession) -> None:
