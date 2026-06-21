@@ -1,0 +1,21 @@
+[project]
+name = "pasarguard-telegram-sales-bot"
+version = "0.1.0"
+description = "Telegram VPN sales bot integrated with PasarGuard Panel API"
+requires-python = ">=3.12"
+dependencies = [
+    "aiogram>=3.6,<4",
+    "aiohttp>=3.9,<4",
+    "alembic>=1.13,<2",
+    "apscheduler>=3.10,<4",
+    "asyncpg>=0.29,<1",
+    "cryptography>=42,<46",
+    "pydantic-settings>=2.2,<3",
+    "redis>=5,<6",
+    "sqlalchemy[asyncio]>=2.0,<3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
