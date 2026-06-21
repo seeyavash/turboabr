@@ -84,8 +84,6 @@ def store_menu() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="افزودن تعرفه", callback_data="admin_plan:add")],
             [InlineKeyboardButton(text="لیست تعرفه‌ها", callback_data="admin_plan:list")],
-            [InlineKeyboardButton(text="قیمت پیش‌فرض هوشمند", callback_data="admin_set:price_multi_smart_per_gb")],
-            [InlineKeyboardButton(text="قیمت پیش‌فرض اقتصادی", callback_data="admin_set:price_multi_economy_per_gb")],
             [InlineKeyboardButton(text="حد هشدار کمبود موجودی", callback_data="admin_set:low_balance_threshold")],
             [InlineKeyboardButton(text="درصد کش‌بک معرفی", callback_data="admin_set:referral_cashback_percent")],
             [InlineKeyboardButton(text="بازگشت", callback_data="admin:menu")],

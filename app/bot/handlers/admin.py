@@ -637,7 +637,7 @@ async def plan_price_step(message: Message, state: FSMContext, session: AsyncSes
     await send_step_prompt(message, state, "این تعرفه روی کدام پنل ساخته شود؟", reply_markup=plan_panel_keyboard(panels))
 
 
-@router.callback_query(AdminState.plan_panel, F.data.startswith("admin_plan_panel:"))
+@router.callback_query(F.data.startswith("admin_plan_panel:"))
 async def plan_panel_step(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     if not await is_admin(session, callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
@@ -647,6 +647,12 @@ async def plan_panel_step(callback: CallbackQuery, state: FSMContext, session: A
         await callback.answer("پنل پیدا نشد یا غیرفعال است.", show_alert=True)
         return
     data = await state.get_data()
+    required = {"plan_name", "plan_description", "plan_price"}
+    if not required.issubset(data):
+        await state.clear()
+        await replace_message(callback, "اطلاعات تعرفه کامل نیست. لطفاً دوباره افزودن تعرفه را شروع کنید.", reply_markup=store_menu())
+        await callback.answer()
+        return
     try:
         plan = await CatalogService(session).add_plan(
             name=data["plan_name"],
