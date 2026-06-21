@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from app.db.models import PaymentMethod, ProductPlan
 
@@ -8,6 +8,16 @@ CANCEL_TEXT = "منصرف شدم / بازگشت"
 def cancel_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=CANCEL_TEXT)]],
+        resize_keyboard=True,
+    )
+
+
+def service_name_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="انتخاب نام خودکار")],
+            [KeyboardButton(text=CANCEL_TEXT)],
+        ],
         resize_keyboard=True,
     )
 
@@ -84,3 +94,11 @@ def service_actions(service_id: int, disabled: bool) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text="حذف سرویس", callback_data=f"svc_delete:{service_id}")])
     rows.append([InlineKeyboardButton(text="بازگشت به سرویس‌ها", callback_data="svc_list_back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def subscription_link_keyboard(link: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="کپی لینک", copy_text=CopyTextButton(text=link))],
+        ]
+    )

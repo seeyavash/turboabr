@@ -13,7 +13,7 @@ class VpnServiceManager:
         self.session = session
         self.panel = panel
 
-    async def create_paid_service(self, user: User, service_type: ServiceType) -> VpnService:
+    async def create_paid_service(self, user: User, service_type: ServiceType, username: str | None = None) -> VpnService:
         min_balance = await SettingsService(self.session).get_int("min_new_service_balance", 50000)
         if user.wallet_balance_toman < min_balance:
             raise ValueError(f"برای خرید سرویس جدید، موجودی کیف پول باید حداقل {min_balance:,} تومان باشد.")
@@ -25,9 +25,10 @@ class VpnServiceManager:
             expire=0,
             plan_id=None,
             panel_id=None,
+            username=username,
         )
 
-    async def create_paid_plan(self, user: User, plan: ProductPlan) -> VpnService:
+    async def create_paid_plan(self, user: User, plan: ProductPlan, username: str | None = None) -> VpnService:
         min_balance = await SettingsService(self.session).get_int("min_new_service_balance", 50000)
         if user.wallet_balance_toman < min_balance:
             raise ValueError(f"برای خرید سرویس جدید، موجودی کیف پول باید حداقل {min_balance:,} تومان باشد.")
@@ -39,6 +40,7 @@ class VpnServiceManager:
             expire=0,
             plan_id=plan.id,
             panel_id=plan.panel_id,
+            username=username,
         )
 
     async def create_test_service(self, user: User) -> VpnService:
@@ -54,6 +56,7 @@ class VpnServiceManager:
             expire=expire,
             plan_id=None,
             panel_id=None,
+            username=None,
         )
 
     async def _create(
@@ -65,8 +68,9 @@ class VpnServiceManager:
         expire: int,
         plan_id: int | None,
         panel_id: int | None,
+        username: str | None,
     ) -> VpnService:
-        username = f"tg_{user.telegram_id}_{int(datetime.now(UTC).timestamp())}"
+        username = username or f"tg_{user.telegram_id}_{int(datetime.now(UTC).timestamp())}"
         panel_user = await self.panel.create_user(username, data_limit_bytes=data_limit_bytes, expire=expire)
         panel_user_id = panel_user.get("id")
         sub_url = panel_user.get("subscription_url")
