@@ -524,7 +524,10 @@ async def template_list(callback: CallbackQuery, session: AsyncSession) -> None:
     lines = ["تمپلیت‌های این پنل:"]
     for template in templates:
         lines.append(
-            f"#{template.id} | {template.name} | گروه‌ها: {','.join(str(item) for item in template.group_ids) or '-'} | کلاینت: {template.subscription_client_type}"
+            f"\nتمپلیت #{template.id}\n"
+            f"نام: {template.name}\n"
+            f"گروه‌ها: {','.join(str(item) for item in template.group_ids) or '-'}\n"
+            f"نوع کلاینت: {template.subscription_client_type}"
         )
     await replace_message(callback, "\n".join(lines), reply_markup=panel_actions(panel_id, panel.is_active))
     await callback.answer()
