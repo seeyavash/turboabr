@@ -105,7 +105,11 @@ async def delete_stale_disabled_services(bot: Bot) -> None:
         result = await session.execute(
             select(VpnService, User)
             .join(User, User.id == VpnService.user_id)
-            .where(VpnService.status == ServiceStatus.disabled.value, VpnService.disabled_at <= cutoff)
+            .where(
+                VpnService.status == ServiceStatus.disabled.value,
+                VpnService.disabled_reason == "wallet",
+                VpnService.disabled_at <= cutoff,
+            )
         )
         for service, user in result.all():
             try:

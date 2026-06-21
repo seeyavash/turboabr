@@ -30,6 +30,7 @@ async def disable_user_active_services(session: AsyncSession, bot: Bot, user: Us
             await panel.set_disabled(service.pasarguard_username, True)
             service.status = ServiceStatus.disabled.value
             service.disabled_at = datetime.now(UTC)
+            service.disabled_reason = "wallet"
             disabled += 1
         except PasarGuardError:
             logger.exception("Failed disabling service %s", service.id)
@@ -56,6 +57,7 @@ async def reactivate_user_disabled_services(session: AsyncSession, bot: Bot, use
         select(VpnService).where(
             VpnService.user_id == user.id,
             VpnService.status == ServiceStatus.disabled.value,
+            VpnService.disabled_reason == "wallet",
         )
     )
     services = list(result.scalars())
@@ -67,6 +69,7 @@ async def reactivate_user_disabled_services(session: AsyncSession, bot: Bot, use
             await panel.set_disabled(service.pasarguard_username, False)
             service.status = ServiceStatus.active.value
             service.disabled_at = None
+            service.disabled_reason = None
             reactivated += 1
         except PasarGuardError:
             logger.exception("Failed reactivating service %s", service.id)

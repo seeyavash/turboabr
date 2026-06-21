@@ -95,11 +95,13 @@ class VpnServiceManager:
         await self.panel.set_disabled(service.pasarguard_username, False)
         service.status = ServiceStatus.active.value
         service.disabled_at = None
+        service.disabled_reason = None
 
     async def disable(self, service: VpnService) -> None:
         await self.panel.set_disabled(service.pasarguard_username, True)
         service.status = ServiceStatus.disabled.value
         service.disabled_at = datetime.now(UTC)
+        service.disabled_reason = "manual"
 
     async def delete(self, service: VpnService) -> None:
         await self.panel.delete_user(service.pasarguard_username)

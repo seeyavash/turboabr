@@ -126,6 +126,7 @@ class VpnService(Base):
     last_traffic_mb: Mapped[int] = mapped_column(BigInteger, default=0)
     total_billed_mb: Mapped[int] = mapped_column(BigInteger, default=0)
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    disabled_reason: Mapped[str | None] = mapped_column(String(32))
     is_test: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
