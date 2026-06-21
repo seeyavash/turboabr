@@ -92,10 +92,18 @@ class CatalogService:
         panel = await self.session.get(PasarGuardPanel, panel_id)
         if not panel:
             return PasarGuardClient()
+        group_ids = panel.group_ids or []
+        subscription_client_type = panel.subscription_client_type
+        if not group_ids:
+            templates = await self.templates_for_panel(panel.id)
+            template = next((item for item in templates if item.is_active and item.group_ids), None)
+            if template:
+                group_ids = template.group_ids or []
+                subscription_client_type = template.subscription_client_type
         return PasarGuardClient(
             base_url=panel.base_url,
             username=panel.username,
             password=decrypt_secret(panel.password_secret) or "",
-            group_ids=panel.group_ids or [],
-            subscription_client_type=panel.subscription_client_type,
+            group_ids=group_ids,
+            subscription_client_type=subscription_client_type,
         )

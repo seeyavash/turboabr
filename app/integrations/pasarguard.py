@@ -57,6 +57,8 @@ class PasarGuardClient:
         return self._token
 
     async def create_user(self, username: str, data_limit_bytes: int = 0, expire: int = 0) -> dict:
+        if not self.group_ids:
+            raise PasarGuardError("برای این پنل هیچ گروهی تنظیم نشده است. از مدیریت پنل‌ها برای این پنل یک تمپلیت با شناسه گروه معتبر اضافه کنید.")
         payload = {
             "username": username,
             "status": "active",

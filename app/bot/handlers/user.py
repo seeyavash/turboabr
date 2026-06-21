@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.keyboards.common import main_menu, payment_methods, plan_detail_actions, receipt_button, service_actions, service_types
 from app.core.config import settings as env_settings
 from app.db.models import PaymentMethod, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, VpnService
+from app.integrations.pasarguard import PasarGuardError
 from app.services.catalog import CatalogService
 from app.services.payments import PaymentService
 from app.services.services import VpnServiceManager
@@ -93,8 +94,16 @@ async def buy_plan_confirmed(callback: CallbackQuery, session: AsyncSession) -> 
     panel = await CatalogService(session).client_for_panel(plan.panel_id)
     try:
         service = await VpnServiceManager(session, panel).create_paid_plan(user, plan)
-    except Exception as exc:
+    except PasarGuardError as exc:
+        await callback.message.answer(f"خطا در ساخت سرویس:\n{exc}")
+        await callback.answer()
+        return
+    except ValueError as exc:
         await callback.message.answer(str(exc))
+        await callback.answer()
+        return
+    except Exception as exc:
+        await callback.message.answer("خطای غیرمنتظره در ساخت سرویس. لطفاً با پشتیبانی تماس بگیرید.")
         await callback.answer()
         return
     await callback.message.answer(f"سرویس شما ساخته شد.\nلینک اشتراک:\n{service.subscription_url}")
@@ -114,6 +123,9 @@ async def test_account(message: Message, session: AsyncSession) -> None:
     try:
         panel = await CatalogService(session).client_for_panel(panels[0].id)
         service = await VpnServiceManager(session, panel).create_test_service(user)
+    except PasarGuardError as exc:
+        await message.answer(f"خطا در ساخت اکانت تست:\n{exc}")
+        return
     except Exception as exc:
         await message.answer(str(exc))
         return
