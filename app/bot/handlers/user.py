@@ -13,6 +13,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.keyboards.admin import admin_user_actions
 from app.bot.keyboards.common import (
     CANCEL_TEXT,
     cancel_reply_keyboard,
@@ -136,7 +137,7 @@ async def is_admin_user(session: AsyncSession, telegram_id: int) -> bool:
     return telegram_id in await SettingsService(session).admin_ids()
 
 
-async def admin_user_info_text(session: AsyncSession, telegram_id: int) -> str | None:
+async def admin_user_info_payload(session: AsyncSession, telegram_id: int) -> tuple[str, User] | None:
     user = (await session.execute(select(User).where(User.telegram_id == telegram_id))).scalar_one_or_none()
     if not user:
         return None
@@ -144,7 +145,7 @@ async def admin_user_info_text(session: AsyncSession, telegram_id: int) -> str |
     services = list(result.scalars())
     active_count = len([service for service in services if service.status == ServiceStatus.active.value])
     disabled_count = len([service for service in services if service.status == ServiceStatus.disabled.value])
-    return (
+    text = (
         f"کاربر: {user.telegram_id}\n"
         f"نام: {user.full_name or '-'}\n"
         f"یوزرنیم: @{user.username or '-'}\n"
@@ -153,6 +154,7 @@ async def admin_user_info_text(session: AsyncSession, telegram_id: int) -> str |
         f"اکانت تست گرفته: {'بله' if user.has_test_account else 'خیر'}\n"
         f"مسدود: {'بله' if user.is_blocked else 'خیر'}"
     )
+    return text, user
 
 
 @router.message(CommandStart())
@@ -167,8 +169,12 @@ async def start(message: Message, session: AsyncSession) -> None:
         except ValueError:
             await message.answer("لینک اطلاعات کاربر معتبر نیست.")
             return
-        text = await admin_user_info_text(session, target_telegram_id)
-        await message.answer(text or "کاربر پیدا نشد.")
+        payload = await admin_user_info_payload(session, target_telegram_id)
+        if not payload:
+            await message.answer("کاربر پیدا نشد.")
+            return
+        text, user = payload
+        await message.answer(text, reply_markup=admin_user_actions(user.id, user.is_blocked))
         return
     existed = (await session.execute(select(User).where(User.telegram_id == message.from_user.id))).scalar_one_or_none()
     user = await UserService(session).get_or_create(message.from_user, referral_code)
