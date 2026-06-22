@@ -1854,18 +1854,40 @@ async def admin_block_user(callback: CallbackQuery, session: AsyncSession) -> No
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     user = await session.get(User, int(callback.data.split(":", 1)[1]))
-    if user:
-        user.is_blocked = True
-        result = await session.execute(
-            select(VpnService).where(
-                VpnService.user_id == user.id,
-                VpnService.status == ServiceStatus.active.value,
-            )
+    if not user:
+        await callback.answer("کاربر پیدا نشد.", show_alert=True)
+        return
+    user.is_blocked = True
+    result = await session.execute(
+        select(VpnService).where(
+            VpnService.user_id == user.id,
+            VpnService.status == ServiceStatus.active.value,
         )
-        for service in result.scalars():
+    )
+    disabled = 0
+    failed = 0
+    for service in result.scalars():
+        try:
             panel = await CatalogService(session).client_for_panel(service.panel_id)
             await VpnServiceManager(session, panel).disable(service)
-    await callback.answer("کاربر مسدود شد.")
+            disabled += 1
+        except Exception as exc:
+            failed += 1
+            await send_supergroup_message(
+                session,
+                callback.bot,
+                "errors",
+                f"خطا در غیرفعال کردن سرویس هنگام مسدودسازی کاربر\n"
+                f"کاربر: {user.telegram_id}\n"
+                f"سرویس: #{service.id}\n"
+                f"اکانت: {service.pasarguard_username}\n"
+                f"خطا: {exc}",
+            )
+    await replace_with_admin_user_info(callback, session, user.id)
+    if failed:
+        await callback.answer(f"کاربر مسدود شد، {disabled} سرویس غیرفعال شد، {failed} سرویس خطا داد.", show_alert=True)
+    else:
+        await callback.answer("کاربر مسدود شد.")
 
 
 @router.callback_query(F.data.startswith("admin_user_unblock:"))
@@ -1874,8 +1896,11 @@ async def admin_unblock_user(callback: CallbackQuery, session: AsyncSession) -> 
         await callback.answer("دسترسی ندارید.", show_alert=True)
         return
     user = await session.get(User, int(callback.data.split(":", 1)[1]))
-    if user:
-        user.is_blocked = False
+    if not user:
+        await callback.answer("کاربر پیدا نشد.", show_alert=True)
+        return
+    user.is_blocked = False
+    await replace_with_admin_user_info(callback, session, user.id)
     await callback.answer("مسدودی کاربر برداشته شد.")
 
 
