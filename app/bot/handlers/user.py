@@ -62,6 +62,7 @@ class BuyService(StatesGroup):
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,27}$")
 AUTO_USERNAME_TEXT = "انتخاب نام خودکار"
 USERNAME_SUFFIX_CHARS = string.ascii_letters + string.digits
+TEST_DEEPLINK_CODES = {"test", "trial", "test_account"}
 
 
 def with_random_username_suffix(username: str) -> str:
@@ -175,6 +176,9 @@ async def start(message: Message, session: AsyncSession) -> None:
             return
         text, user = payload
         await message.answer(text, reply_markup=admin_user_actions(user.id, user.is_blocked))
+        return
+    if referral_code and referral_code.strip().lower() in TEST_DEEPLINK_CODES:
+        await test_account(message, session)
         return
     existed = (await session.execute(select(User).where(User.telegram_id == message.from_user.id))).scalar_one_or_none()
     user = await UserService(session).get_or_create(message.from_user, referral_code)
