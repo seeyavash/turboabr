@@ -5,7 +5,7 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +37,7 @@ from app.bot.keyboards.admin import (
     user_services_menu,
 )
 from app.db.models import PanelTemplate, PasarGuardPanel, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TransactionKind, User, VpnService, WalletTransaction
+from app.services.backups import create_database_backup
 from app.services.catalog import CatalogService
 from app.services.menu import ACTION_LABELS, COLOR_LABELS, MenuService
 from app.services.notifications import send_supergroup_message
@@ -198,6 +199,27 @@ async def admin(message: Message, session: AsyncSession) -> None:
         await message.answer("شما به پنل مدیریت دسترسی ندارید.")
         return
     await message.answer("پنل مدیریت", reply_markup=admin_menu())
+
+
+@router.message(Command("backup"))
+async def backup_database(message: Message, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    status = await message.answer("در حال ساخت بکاپ دیتابیس...")
+    try:
+        backup = await create_database_backup()
+    except Exception as exc:
+        await status.edit_text(f"خطا در ساخت بکاپ:\n{exc}")
+        return
+    await message.answer_document(
+        BufferedInputFile(backup.data, filename=backup.filename),
+        caption="بکاپ دستی دیتابیس ربات",
+    )
+    try:
+        await status.delete()
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "admin:menu")
