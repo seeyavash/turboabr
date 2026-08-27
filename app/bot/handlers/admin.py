@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -92,6 +93,49 @@ class AdminState(StatesGroup):
     broadcast = State()
     broadcast_pin = State()
     wallet_adjust = State()
+    import_users = State()
+
+
+USER_IMPORT_RE = re.compile(
+    r"نام\s*[:：]\s*(?P<name>.*?)\s*"
+    r"یوزرنیم\s*[:：]\s*(?P<username>.*?)\s*"
+    r"آیدی\s*عددی\s*[:：]\s*(?P<telegram_id>\d+)",
+    re.DOTALL,
+)
+USERNAME_RE = re.compile(r"@?([A-Za-z0-9_]{3,32})")
+
+
+def clean_import_value(value: str) -> str | None:
+    cleaned = " ".join(value.replace("\u200f", "").replace("\u200e", "").split()).strip()
+    if not cleaned or cleaned in {"-", "-@", "@"}:
+        return None
+    return cleaned[:255]
+
+
+def clean_import_username(value: str) -> str | None:
+    cleaned = clean_import_value(value)
+    if not cleaned:
+        return None
+    match = USERNAME_RE.search(cleaned)
+    return match.group(1) if match else None
+
+
+def parse_imported_users(text: str) -> list[dict]:
+    users = []
+    seen_ids = set()
+    for match in USER_IMPORT_RE.finditer(text):
+        telegram_id = int(match.group("telegram_id"))
+        if telegram_id in seen_ids:
+            continue
+        seen_ids.add(telegram_id)
+        users.append(
+            {
+                "telegram_id": telegram_id,
+                "full_name": clean_import_value(match.group("name")),
+                "username": clean_import_username(match.group("username")),
+            }
+        )
+    return users
 
 
 async def is_admin(session: AsyncSession, telegram_id: int) -> bool:
@@ -220,6 +264,23 @@ async def backup_database(message: Message, session: AsyncSession) -> None:
         await status.delete()
     except Exception:
         pass
+
+
+@router.message(Command("import_users"))
+async def import_users_command(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    text = (message.text or "").split(maxsplit=1)
+    if len(text) > 1:
+        await import_users_from_text(message, session, text[1])
+        return
+    await state.set_state(AdminState.import_users)
+    await message.answer(
+        "متن پیام‌های «کاربر جدید وارد ربات شد» را همینجا ارسال کنید.\n"
+        "هر تعداد کاربر داخل یک پیام باشد، همه خوانده می‌شوند.\n"
+        "برای لغو، «لغو» را بفرستید."
+    )
 
 
 @router.callback_query(F.data == "admin:menu")
@@ -1349,6 +1410,64 @@ async def user_lookup_start(callback: CallbackQuery, state: FSMContext, session:
     await callback.answer()
 
 
+@router.callback_query(F.data == "admin_user:import")
+async def import_users_start(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True)
+        return
+    await state.set_state(AdminState.import_users)
+    await callback.message.answer(
+        "متن پیام‌های «کاربر جدید وارد ربات شد» را ارسال کنید.\n"
+        "فرمت باید شامل نام، یوزرنیم و آیدی عددی باشد.\n"
+        "برای لغو، «لغو» را بفرستید."
+    )
+    await callback.answer()
+
+
+async def import_users_from_text(message: Message, session: AsyncSession, text: str) -> None:
+    parsed_users = parse_imported_users(text)
+    if not parsed_users:
+        await message.answer("هیچ کاربری از متن پیدا نشد. متن باید شامل «نام»، «یوزرنیم» و «آیدی عددی» باشد.")
+        return
+
+    created = 0
+    updated = 0
+    unchanged = 0
+    for item in parsed_users:
+        user = (await session.execute(select(User).where(User.telegram_id == item["telegram_id"]))).scalar_one_or_none()
+        if user:
+            changed = False
+            if item["username"] and user.username != item["username"]:
+                user.username = item["username"]
+                changed = True
+            if item["full_name"] and user.full_name != item["full_name"]:
+                user.full_name = item["full_name"]
+                changed = True
+            if changed:
+                updated += 1
+            else:
+                unchanged += 1
+            continue
+
+        session.add(
+            User(
+                telegram_id=item["telegram_id"],
+                username=item["username"],
+                full_name=item["full_name"],
+            )
+        )
+        created += 1
+
+    await message.answer(
+        "ورود کاربران انجام شد.\n"
+        f"کاربر جدید اضافه شد: {created:,}\n"
+        f"کاربر موجود بروزرسانی شد: {updated:,}\n"
+        f"بدون تغییر/تکراری: {unchanged:,}\n"
+        f"کل رکورد خوانده‌شده از متن: {len(parsed_users):,}",
+        reply_markup=user_services_menu(),
+    )
+
+
 async def send_admin_user_info(message: Message, session: AsyncSession, telegram_id: int) -> None:
     user = (await session.execute(select(User).where(User.telegram_id == telegram_id))).scalar_one_or_none()
     if not user:
@@ -1413,6 +1532,20 @@ async def user_lookup_state(message: Message, state: FSMContext, session: AsyncS
         await message.answer("دسترسی ندارید.")
         return
     await send_admin_user_info(message, session, int((message.text or "").strip()))
+    await state.clear()
+
+
+@router.message(AdminState.import_users)
+async def import_users_state(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if not await is_admin(session, message.from_user.id):
+        await message.answer("دسترسی ندارید.")
+        return
+    text = (message.text or "").strip()
+    if text in {"لغو", "cancel", "Cancel"}:
+        await state.clear()
+        await message.answer("ورود کاربران لغو شد.", reply_markup=user_services_menu())
+        return
+    await import_users_from_text(message, session, text)
     await state.clear()
 
 

@@ -277,6 +277,7 @@ def user_services_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="دریافت اطلاعات کاربر", callback_data="admin_user:lookup")],
+            [InlineKeyboardButton(text="ورود کاربران از متن", callback_data="admin_user:import")],
             [InlineKeyboardButton(text="آخرین کاربران", callback_data="admin:users")],
             [InlineKeyboardButton(text="سرویس‌های فعال/غیرفعال", callback_data="admin:services")],
             [InlineKeyboardButton(text="ارسال پیام همگانی", callback_data="admin:broadcast")],
