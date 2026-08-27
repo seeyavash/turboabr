@@ -138,6 +138,30 @@ async def is_admin_user(session: AsyncSession, telegram_id: int) -> bool:
     return telegram_id in await SettingsService(session).admin_ids()
 
 
+async def notify_new_user(session: AsyncSession, bot, user: User) -> None:
+    await send_supergroup_message(
+        session,
+        bot,
+        "users",
+        f"کاربر جدید وارد ربات شد\n"
+        f"نام: {user.full_name or '-'}\n"
+        f"یوزرنیم: @{user.username or '-'}\n"
+        f"آیدی عددی: {user.telegram_id}",
+    )
+
+
+async def get_or_create_user_with_notification(
+    session: AsyncSession,
+    tg_user,
+    bot,
+    referral_code: str | None = None,
+) -> User:
+    user = await UserService(session).get_or_create(tg_user, referral_code)
+    if getattr(user, "_was_created", False):
+        await notify_new_user(session, bot, user)
+    return user
+
+
 async def admin_user_info_payload(session: AsyncSession, telegram_id: int) -> tuple[str, User] | None:
     user = (await session.execute(select(User).where(User.telegram_id == telegram_id))).scalar_one_or_none()
     if not user:
@@ -180,19 +204,7 @@ async def start(message: Message, session: AsyncSession) -> None:
     if referral_code and referral_code.strip().lower() in TEST_DEEPLINK_CODES:
         await test_account(message, session)
         return
-    existed = (await session.execute(select(User).where(User.telegram_id == message.from_user.id))).scalar_one_or_none()
-    user = await UserService(session).get_or_create(message.from_user, referral_code)
-    is_new_user = bool(getattr(user, "_was_created", not existed))
-    if is_new_user:
-        await send_supergroup_message(
-            session,
-            message.bot,
-            "users",
-            f"کاربر جدید وارد ربات شد\n"
-            f"نام: {user.full_name or '-'}\n"
-            f"یوزرنیم: @{user.username or '-'}\n"
-            f"آیدی عددی: {user.telegram_id}",
-        )
+    user = await get_or_create_user_with_notification(session, message.from_user, message.bot, referral_code)
     await message.answer(
         f"خوش آمدید.\nموجودی کیف پول: {user.wallet_balance_toman:,} تومان",
         reply_markup=await MenuService(session).reply_markup(),
@@ -332,7 +344,7 @@ async def buy_service_username(message: Message, state: FSMContext, session: Asy
 
 
 async def test_account(message: Message, session: AsyncSession) -> None:
-    user = await UserService(session).get_or_create(message.from_user)
+    user = await get_or_create_user_with_notification(session, message.from_user, message.bot)
     if user.is_blocked:
         await message.answer("حساب شما مسدود شده است.")
         return
