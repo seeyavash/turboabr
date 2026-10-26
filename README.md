@@ -7,8 +7,8 @@ Production-oriented Aiogram 3 bot for selling PasarGuard-backed VPN/proxy servic
 - User menu: buy service, services, wallet, invite link, wallet charge, one-time 100MB/1 day test account, support.
 - Service plans: Multi Smart and Multi Economy with admin-configurable per-GB pricing.
 - Wallet rules: 50,000 Toman minimum only for new paid service creation; reactivation can happen with any positive wallet balance.
-- Billing job: every 30 minutes reads PasarGuard usage, computes MB deltas, bills by MB, logs usage, warns on low balance, disables insufficient-balance services.
-- Cleanup job: deletes services disabled for more than 48 hours.
+- Billing job: every 60 seconds (configurable with `TRAFFIC_SYNC_SECONDS`, minimum 10) reads PasarGuard usage, computes MB deltas, bills by MB, logs usage, warns on low balance, and disables services when the wallet reaches zero or becomes negative.
+- Cleanup job: deletes wallet-disabled services after 48 hours only if the wallet is still zero/negative. Manually disabled services and customers whose top-up is awaiting reactivation are preserved.
 - Payments: card-to-card receipts with admin approval, Plisio, NOWPayments, Telegram Stars.
 - Admin panel sections: panel management, store/tariff settings, admin settings, payment settings, and user services.
 - Panel management: add, view, edit, enable/disable, and delete PasarGuard panels from Telegram.
@@ -65,3 +65,22 @@ The client uses the public PasarGuard REST routes:
 - `GET /api/user/{user_id}/subscription/{client_type}`
 
 PasarGuard panel credentials are added from Telegram: `/admin` -> `Modiriate panelha` -> `Add PasarGuard panel`.
+
+## Wallet lifecycle and verification
+
+- Every eligible service for a customer is settled before deciding whether to disable all their active paid services. Test accounts are excluded.
+- A negative wallet is debt: a top-up first covers the debt. Wallet-disabled services reactivate only once the balance is strictly positive. Manual/admin blocks are not cleared by top-ups.
+- Failed disconnects/reactivations are retried by the billing scheduler even if no new traffic is reported. Telegram delivery failures do not roll back billing or deposits.
+- Settlement uses one transaction and a PostgreSQL user-row lock per customer; wallet changes use atomic SQL updates. Payment approval locks its receipt to prevent duplicate credits.
+- Traffic is rounded down to whole MiB, with the fractional remainder included on a later poll. The per-interval cost is rounded up to a whole Toman using 1024 MiB per GiB. Repeated polls at the same counter do not charge again.
+- A backwards or invalid panel counter raises an error for reconciliation rather than silently writing zero or inventing a charge. Do not reset panel usage counters without reconciling the bot baseline.
+- Disconnects are polling-based, not an instantaneous spending cap: the default detection delay is up to about a minute, plus panel/network processing. A panel outage can extend this delay.
+
+Run isolated regression tests (no production panel calls or customer data):
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m unittest discover -s tests -v
+```
+
+The tests execute the production ORM/services against temporary in-memory SQLite and simulate panel/Telegram transport. They cover consumption, negative/zero balances, multiple services, top-ups, reactivation retries, counter resets, custom prices, cashback and cleanup. PostgreSQL locking and real device disconnect/reconnect require verification on the deployed server; SQLite tests do not prove those behaviors.

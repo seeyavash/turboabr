@@ -1,4 +1,6 @@
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.db.models import TransactionKind, User, WalletTransaction
 from app.services.settings import SettingsService
@@ -8,8 +10,26 @@ class WalletService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def add(self, user: User, amount: int, kind: TransactionKind, description: str, metadata: dict | None = None) -> None:
-        user.wallet_balance_toman += amount
+    async def add(
+        self,
+        user: User,
+        amount: int,
+        kind: TransactionKind,
+        description: str,
+        metadata: dict | None = None,
+    ) -> None:
+        if amount <= 0:
+            raise ValueError("مبلغ شارژ باید بیشتر از صفر باشد.")
+        balance = await self.session.scalar(
+            update(User)
+            .where(User.id == user.id)
+            .values(wallet_balance_toman=User.wallet_balance_toman + amount)
+            .returning(User.wallet_balance_toman)
+            .execution_options(synchronize_session=False)
+        )
+        if balance is None:
+            raise ValueError("کاربر کیف پول پیدا نشد.")
+        set_committed_value(user, "wallet_balance_toman", balance)
         self.session.add(
             WalletTransaction(
                 user_id=user.id,
@@ -29,11 +49,21 @@ class WalletService:
         allow_negative: bool = False,
         kind: TransactionKind = TransactionKind.traffic_charge,
     ) -> bool:
-        if amount <= 0:
+        if amount < 0:
+            raise ValueError("مبلغ کسر موجودی نمی‌تواند منفی باشد.")
+        if amount == 0:
             return True
-        if user.wallet_balance_toman < amount and not allow_negative:
+        statement = update(User).where(User.id == user.id)
+        if not allow_negative:
+            statement = statement.where(User.wallet_balance_toman >= amount)
+        balance = await self.session.scalar(
+            statement.values(wallet_balance_toman=User.wallet_balance_toman - amount)
+            .returning(User.wallet_balance_toman)
+            .execution_options(synchronize_session=False)
+        )
+        if balance is None:
             return False
-        user.wallet_balance_toman -= amount
+        set_committed_value(user, "wallet_balance_toman", balance)
         self.session.add(
             WalletTransaction(
                 user_id=user.id,

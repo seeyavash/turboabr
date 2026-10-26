@@ -1,14 +1,15 @@
 import logging
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from aiogram import Bot
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
+from aiogram import Bot
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+from app.core.config import settings
 from app.db.session import SessionLocal
 from app.jobs.billing import delete_stale_disabled_services, sync_traffic_usage
 from app.jobs.payments import verify_crypto_payments
 from app.services.backups import send_database_backup_to_admins
-
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler.add_job(
         sync_traffic_usage,
         "interval",
-        minutes=30,
+        seconds=settings.traffic_sync_seconds,
         args=[bot],
         id="traffic-sync",
         replace_existing=True,

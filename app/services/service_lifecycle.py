@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import ServiceStatus, User, VpnService
 from app.integrations.pasarguard import PasarGuardError
 from app.services.catalog import CatalogService
-from app.services.notifications import send_supergroup_message
+from app.services.notifications import send_supergroup_message, send_user_message
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ async def disable_user_active_services(session: AsyncSession, bot: Bot, user: Us
 
 
 async def reactivate_user_disabled_services(session: AsyncSession, bot: Bot, user: User) -> int:
-    if user.wallet_balance_toman <= 0:
+    if user.wallet_balance_toman <= 0 or user.is_blocked:
         return 0
     result = await session.execute(
         select(VpnService).where(
@@ -80,7 +80,7 @@ async def reactivate_user_disabled_services(session: AsyncSession, bot: Bot, use
                 f"خطا در فعال‌سازی خودکار سرویس\nکاربر: {user.telegram_id}\nسرویس: #{service.id}",
             )
     if reactivated:
-        await bot.send_message(user.telegram_id, f"{reactivated} سرویس شما بعد از شارژ کیف پول دوباره فعال شد.")
+        await send_user_message(bot, user.telegram_id, f"{reactivated} سرویس شما بعد از شارژ کیف پول دوباره فعال شد.")
         await send_supergroup_message(
             session,
             bot,

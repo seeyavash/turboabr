@@ -4,12 +4,19 @@ import secrets
 import string
 from io import BytesIO
 
+import qrcode
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-import qrcode
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LabeledPrice,
+    Message,
+)
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,11 +34,21 @@ from app.bot.keyboards.common import (
     user_services_keyboard,
 )
 from app.core.config import settings as env_settings
-from app.db.models import PaymentMethod, PaymentRequest, PaymentStatus, ProductPlan, ServiceStatus, TrafficUsageLog, TransactionKind, User, VpnService
+from app.db.models import (
+    PaymentMethod,
+    PaymentRequest,
+    PaymentStatus,
+    ProductPlan,
+    ServiceStatus,
+    TrafficUsageLog,
+    TransactionKind,
+    User,
+    VpnService,
+)
 from app.integrations.pasarguard import PasarGuardError
-from app.services.notifications import send_supergroup_message, send_supergroup_photo
 from app.services.catalog import CatalogService
 from app.services.menu import MenuService
+from app.services.notifications import send_supergroup_message, send_supergroup_photo
 from app.services.payments import PaymentService
 from app.services.service_lifecycle import reactivate_user_disabled_services
 from app.services.services import VpnServiceManager
@@ -427,9 +444,15 @@ async def service_view(callback: CallbackQuery, session: AsyncSession) -> None:
 @router.callback_query(F.data.startswith("svc_reactivate:"))
 async def reactivate_service(callback: CallbackQuery, session: AsyncSession) -> None:
     user = await UserService(session).get_or_create(callback.from_user)
+    if user.is_blocked:
+        await callback.answer("حساب شما مسدود شده است.", show_alert=True)
+        return
     service = await session.get(VpnService, int(callback.data.split(":", 1)[1]))
     if not service or service.user_id != user.id:
         await callback.answer("سرویس پیدا نشد.", show_alert=True)
+        return
+    if service.status != ServiceStatus.disabled.value or service.disabled_reason != "wallet":
+        await callback.answer("این سرویس از این بخش قابل فعال‌سازی نیست. با پشتیبانی تماس بگیرید.", show_alert=True)
         return
     if user.wallet_balance_toman <= 0:
         await callback.answer("ابتدا کیف پول خود را شارژ کنید.", show_alert=True)
@@ -642,6 +665,7 @@ async def stars_paid(message: Message, session: AsyncSession) -> None:
     amount = int(message.successful_payment.invoice_payload.split(":", 1)[1])
     await WalletService(session).add(user, amount, TransactionKind.deposit, "شارژ کیف پول با استارز تلگرام")
     await reactivate_user_disabled_services(session, message.bot, user)
+    await session.commit()
     await message.answer(
         f"کیف پول شما به مبلغ {amount:,} تومان شارژ شد.",
         reply_markup=await MenuService(session).reply_markup(),

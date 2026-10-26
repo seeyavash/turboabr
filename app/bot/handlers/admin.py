@@ -1701,6 +1701,7 @@ async def admin_user_wallet_save(message: Message, state: FSMContext, session: A
             kind=TransactionKind.admin_adjustment,
         )
         text = f"{deducted:,} تومان از موجودی کاربر کم شد."
+    await session.commit()
     await state.clear()
     await message.answer(text)
     await send_admin_user_info(message, session, user.telegram_id)
@@ -2143,6 +2144,7 @@ async def add_balance(message: Message, session: AsyncSession) -> None:
         return
     await WalletService(session).add(user, int(parts[2]), TransactionKind.admin_adjustment, f"تغییر موجودی توسط ادمین {message.from_user.id}")
     await reactivate_user_disabled_services(session, message.bot, user)
+    await session.commit()
     await message.answer("موجودی بروزرسانی شد.")
 
 

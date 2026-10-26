@@ -1,17 +1,22 @@
+import json
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     bot_token: str = Field(default="")
-    database_url: str = Field(default="postgresql+asyncpg://postgres:postgres@localhost:5432/vpnbot")
+    database_url: str = Field(
+        default="postgresql+asyncpg://postgres:postgres@localhost:5432/vpnbot"
+    )
     redis_url: str = Field(default="redis://localhost:6379/0")
-    env_admin_ids: list[int] = Field(default_factory=list)
+    env_admin_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     secret_key: str = Field(default="change-me")
     support_username: str = Field(default="kasrazandi")
     log_level: str = Field(default="INFO")
+    traffic_sync_seconds: int = Field(default=60, ge=10)
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -24,6 +29,8 @@ class Settings(BaseSettings):
             return [value]
         if isinstance(value, list):
             return [int(item) for item in value]
+        if value.strip().startswith("["):
+            return [int(item) for item in json.loads(value)]
         return [int(item.strip()) for item in value.split(",") if item.strip()]
 
 

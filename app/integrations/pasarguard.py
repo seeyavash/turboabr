@@ -2,8 +2,9 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from typing import ClassVar
 
-from aiohttp import ClientSession, ClientTimeout
+from aiohttp import ClientError, ClientSession, ClientTimeout
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ class CachedToken:
 
 
 class PasarGuardClient:
-    _token_cache: dict[str, CachedToken] = {}
+    _token_cache: ClassVar[dict[str, CachedToken]] = {}
 
     def __init__(
         self,
@@ -43,20 +44,35 @@ class PasarGuardClient:
     async def _request(self, method: str, path: str, **kwargs) -> dict | list | str | None:
         if not self.base_url:
             raise PasarGuardError("PasarGuard panel is not configured")
-        headers = kwargs.pop("headers", {})
+        auth_retry = kwargs.pop("_auth_retry", False)
+        headers = dict(kwargs.pop("headers", {}))
         if path != "/api/admin/token":
             headers["Authorization"] = f"Bearer {await self.token()}"
-        async with ClientSession(timeout=ClientTimeout(total=30)) as session:
-            async with session.request(method, f"{self.base_url}{path}", headers=headers, **kwargs) as response:
+        try:
+            async with (
+                ClientSession(timeout=ClientTimeout(total=30)) as session,
+                session.request(
+                    method, f"{self.base_url}{path}", headers=headers, **kwargs
+                ) as response,
+            ):
+                if response.status == 401 and path != "/api/admin/token" and not auth_retry:
+                    self._token_cache.pop(self.cache_key, None)
+                    return await self._request(method, path, _auth_retry=True, **kwargs)
                 text = await response.text()
                 if response.status >= 400:
-                    raise PasarGuardError(f"PasarGuard {method} {path} failed: {response.status} {text[:300]}")
+                    raise PasarGuardError(
+                        f"PasarGuard {method} {path} failed: HTTP {response.status}"
+                    )
                 if not text:
                     return None
                 content_type = response.headers.get("content-type", "")
                 if "application/json" in content_type:
                     return await response.json()
                 return text
+        except (ClientError, TimeoutError, ValueError) as exc:
+            raise PasarGuardError(
+                f"PasarGuard {method} {path} failed: {type(exc).__name__}"
+            ) from exc
 
     async def token(self) -> str:
         cached = self._token_cache.get(self.cache_key)
@@ -67,12 +83,16 @@ class PasarGuardClient:
         if not isinstance(data, dict) or "access_token" not in data:
             raise PasarGuardError("PasarGuard token response did not include access_token")
         token = str(data["access_token"])
-        self._token_cache[self.cache_key] = CachedToken(token, datetime.now(UTC) + timedelta(hours=23))
+        self._token_cache[self.cache_key] = CachedToken(
+            token, datetime.now(UTC) + timedelta(hours=23)
+        )
         return token
 
     async def create_user(self, username: str, data_limit_bytes: int = 0, expire: int = 0) -> dict:
         if not self.group_ids:
-            raise PasarGuardError("برای این پنل هیچ گروهی تنظیم نشده است. از مدیریت پنل‌ها برای این پنل یک تمپلیت با شناسه گروه معتبر اضافه کنید.")
+            raise PasarGuardError(
+                "برای این پنل هیچ گروهی تنظیم نشده است. از مدیریت پنل‌ها برای این پنل یک تمپلیت با شناسه گروه معتبر اضافه کنید."
+            )
         payload = {
             "username": username,
             "status": "active",
@@ -94,7 +114,9 @@ class PasarGuardClient:
         return data
 
     async def set_disabled(self, username: str, disabled: bool) -> dict:
-        data = await self._request("PUT", f"/api/user/{username}/disabled", json={"disabled": disabled})
+        data = await self._request(
+            "PUT", f"/api/user/{username}/disabled", json={"disabled": disabled}
+        )
         if not isinstance(data, dict):
             raise PasarGuardError("PasarGuard set_disabled returned invalid payload")
         return data
@@ -111,5 +133,17 @@ class PasarGuardClient:
 
     async def total_used_mb(self, username: str) -> int:
         user = await self.get_user(username)
-        used_bytes = int(user.get("used_traffic") or user.get("lifetime_used_traffic") or 0)
+        # A missing field is not proof of zero usage. Never fall back from an
+        # explicit zero to a lifetime counter with a different billing baseline.
+        raw = user.get("used_traffic")
+        if raw is None:
+            raw = user.get("lifetime_used_traffic")
+        try:
+            if raw is None or isinstance(raw, bool):
+                raise ValueError("missing traffic")
+            used_bytes = int(raw)
+            if used_bytes < 0:
+                raise ValueError("negative traffic")
+        except (TypeError, ValueError) as exc:
+            raise PasarGuardError("PasarGuard returned an invalid traffic counter") from exc
         return used_bytes // (1024 * 1024)

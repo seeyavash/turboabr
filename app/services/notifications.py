@@ -16,7 +16,19 @@ TOPIC_KEYS = {
 }
 
 
-async def send_supergroup_message(session: AsyncSession, bot: Bot, topic: str, text: str, **kwargs) -> bool:
+async def send_user_message(bot: Bot, telegram_id: int, text: str) -> bool:
+    """Telegram delivery must never abort a wallet/service transaction."""
+    try:
+        await bot.send_message(telegram_id, text)
+        return True
+    except Exception:
+        logger.exception("Failed to notify user %s", telegram_id)
+        return False
+
+
+async def send_supergroup_message(
+    session: AsyncSession, bot: Bot, topic: str, text: str, **kwargs
+) -> bool:
     settings = SettingsService(session)
     chat_id = await settings.get("supergroup_chat_id", "")
     thread_key = TOPIC_KEYS.get(topic)
@@ -31,7 +43,9 @@ async def send_supergroup_message(session: AsyncSession, bot: Bot, topic: str, t
         return False
 
 
-async def send_supergroup_photo(session: AsyncSession, bot: Bot, topic: str, photo: str, caption: str, **kwargs) -> bool:
+async def send_supergroup_photo(
+    session: AsyncSession, bot: Bot, topic: str, photo: str, caption: str, **kwargs
+) -> bool:
     settings = SettingsService(session)
     chat_id = await settings.get("supergroup_chat_id", "")
     thread_key = TOPIC_KEYS.get(topic)
@@ -39,7 +53,9 @@ async def send_supergroup_photo(session: AsyncSession, bot: Bot, topic: str, pho
     if not chat_id or not thread_id:
         return False
     try:
-        await bot.send_photo(int(chat_id), photo, caption=caption, message_thread_id=int(thread_id), **kwargs)
+        await bot.send_photo(
+            int(chat_id), photo, caption=caption, message_thread_id=int(thread_id), **kwargs
+        )
         return True
     except Exception:
         logger.exception("Failed to send supergroup photo to topic %s", topic)

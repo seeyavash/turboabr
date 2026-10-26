@@ -25,8 +25,15 @@ class PaymentService:
         await self.session.flush()
         return payment
 
-    async def create_crypto_request(self, user: User, amount: int, method: PaymentMethod) -> PaymentRequest:
-        payment = PaymentRequest(user_id=user.id, method=method.value, amount_toman=amount, status=PaymentStatus.pending.value)
+    async def create_crypto_request(
+        self, user: User, amount: int, method: PaymentMethod
+    ) -> PaymentRequest:
+        payment = PaymentRequest(
+            user_id=user.id,
+            method=method.value,
+            amount_toman=amount,
+            status=PaymentStatus.pending.value,
+        )
         self.session.add(payment)
         await self.session.flush()
         order_id = f"wallet-{payment.id}"
@@ -42,9 +49,15 @@ class PaymentService:
         payment.provider_url = url
         return payment
 
-    async def approve(self, payment: PaymentRequest, admin_note: str | None = None, bot: Bot | None = None) -> None:
+    async def approve(
+        self, payment: PaymentRequest, admin_note: str | None = None, bot: Bot | None = None
+    ) -> None:
+        # Two admin callbacks/provider retries must never credit a receipt twice.
+        await self.session.refresh(payment, with_for_update=True)
         if payment.status == PaymentStatus.approved.value:
             return
+        if payment.status not in {PaymentStatus.pending.value, PaymentStatus.waiting_receipt.value}:
+            raise ValueError("این پرداخت دیگر قابل تأیید نیست.")
         user = await self.session.get(User, payment.user_id)
         if not user:
             raise ValueError("کاربر پرداخت پیدا نشد.")
@@ -59,6 +72,9 @@ class PaymentService:
         )
         if bot:
             await reactivate_user_disabled_services(self.session, bot, user)
+        # Persist the receipt + deposit before handlers send confirmation to
+        # Telegram. A delivery failure must not undo an approved payment.
+        await self.session.commit()
 
     async def reject(self, payment: PaymentRequest, admin_note: str | None = None) -> None:
         payment.status = PaymentStatus.rejected.value
@@ -68,7 +84,9 @@ class PaymentService:
         result = await self.session.execute(
             select(PaymentRequest).where(
                 PaymentRequest.status == PaymentStatus.pending.value,
-                PaymentRequest.method.in_([PaymentMethod.plisio.value, PaymentMethod.nowpayments.value]),
+                PaymentRequest.method.in_(
+                    [PaymentMethod.plisio.value, PaymentMethod.nowpayments.value]
+                ),
             )
         )
         return list(result.scalars())

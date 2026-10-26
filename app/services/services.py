@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ProductPlan, ServiceStatus, ServiceType, TransactionKind, User, VpnService
 from app.integrations.pasarguard import PasarGuardClient
+from app.services.catalog import CatalogService
 from app.services.settings import SettingsService
 from app.services.wallet import WalletService
 
@@ -91,6 +92,7 @@ class VpnServiceManager:
         panel_id: int | None,
         username: str | None,
     ) -> VpnService:
+        panel_id = (await CatalogService(self.session).resolve_panel(panel_id)).id
         username = username or f"tg_{user.telegram_id}_{int(datetime.now(UTC).timestamp())}"
         panel_user = await self.panel.create_user(username, data_limit_bytes=data_limit_bytes, expire=expire)
         panel_user_id = panel_user.get("id")

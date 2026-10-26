@@ -12,7 +12,9 @@ class CatalogService:
 
     async def active_panels(self) -> list[PasarGuardPanel]:
         result = await self.session.execute(
-            select(PasarGuardPanel).where(PasarGuardPanel.is_active.is_(True)).order_by(PasarGuardPanel.id)
+            select(PasarGuardPanel)
+            .where(PasarGuardPanel.is_active.is_(True))
+            .order_by(PasarGuardPanel.id)
         )
         return list(result.scalars())
 
@@ -24,19 +26,25 @@ class CatalogService:
 
     async def templates_for_panel(self, panel_id: int) -> list[PanelTemplate]:
         result = await self.session.execute(
-            select(PanelTemplate).where(PanelTemplate.panel_id == panel_id).order_by(PanelTemplate.id)
+            select(PanelTemplate)
+            .where(PanelTemplate.panel_id == panel_id)
+            .order_by(PanelTemplate.id)
         )
         return list(result.scalars())
 
     async def resolve_panel(self, panel_id: int | None) -> PasarGuardPanel:
-        """Resolve legacy services/plans without a panel to the default active panel."""
-        panel = await self.session.get(PasarGuardPanel, panel_id) if panel_id is not None else None
-        if panel is None:
-            panels = await self.active_panels()
-            panel = panels[0] if panels else None
-        if panel is None:
+        """Never bill a legacy account against an arbitrarily chosen panel."""
+        if panel_id is not None:
+            panel = await self.session.get(PasarGuardPanel, panel_id)
+            if panel is None:
+                raise PasarGuardError(f"Configured PasarGuard panel {panel_id} does not exist")
+            return panel
+        panels = await self.active_panels()
+        if not panels:
             raise PasarGuardError("No active PasarGuard panel is configured")
-        return panel
+        if len(panels) != 1:
+            raise PasarGuardError("Legacy service has no panel; assign a panel before billing")
+        return panels[0]
 
     async def add_panel(
         self,
