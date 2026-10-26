@@ -22,6 +22,10 @@ def cost_for_mb(used_mb: int, price_per_gb: int) -> int:
 
 async def sync_traffic_usage(bot: Bot) -> None:
     async with SessionLocal() as session:
+        checked = 0
+        charged = 0
+        reassigned = 0
+        failed = 0
         catalog = CatalogService(session)
         settings = SettingsService(session)
         smart_price = await settings.get_int("price_multi_smart_per_gb", 9000)
@@ -37,6 +41,7 @@ async def sync_traffic_usage(bot: Bot) -> None:
             if service.status != ServiceStatus.active.value:
                 continue
             try:
+                checked += 1
                 resolved_panel = await catalog.resolve_panel(service.panel_id)
                 if service.panel_id != resolved_panel.id:
                     logger.info(
@@ -45,6 +50,7 @@ async def sync_traffic_usage(bot: Bot) -> None:
                         resolved_panel.id,
                     )
                     service.panel_id = resolved_panel.id
+                    reassigned += 1
                 panel = await catalog.client_for_panel(resolved_panel.id)
                 total_mb = await panel.total_used_mb(service.pasarguard_username)
                 delta_mb = max(0, total_mb - service.last_traffic_mb)
@@ -56,6 +62,7 @@ async def sync_traffic_usage(bot: Bot) -> None:
                     if plan:
                         price = plan.price_per_gb_toman
                 cost = cost_for_mb(delta_mb, price)
+                charged += 1
                 wallet = WalletService(session)
                 await wallet.deduct(
                     user,
@@ -96,6 +103,7 @@ async def sync_traffic_usage(bot: Bot) -> None:
                         f"موجودی کیف پول شما کم است: {user.wallet_balance_toman:,} تومان. لطفاً کیف پول را شارژ کنید.",
                     )
             except PasarGuardError as exc:
+                failed += 1
                 logger.exception("PasarGuard sync failed for service %s", service.id)
                 await send_supergroup_message(
                     session,
@@ -107,6 +115,13 @@ async def sync_traffic_usage(bot: Bot) -> None:
                     f"جزئیات: {str(exc)[:300]}",
                 )
         await session.commit()
+        logger.info(
+            "Traffic sync completed: checked=%s charged=%s reassigned=%s failed=%s",
+            checked,
+            charged,
+            reassigned,
+            failed,
+        )
 
 
 async def delete_stale_disabled_services(bot: Bot) -> None:
