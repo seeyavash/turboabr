@@ -37,7 +37,15 @@ async def sync_traffic_usage(bot: Bot) -> None:
             if service.status != ServiceStatus.active.value:
                 continue
             try:
-                panel = await catalog.client_for_panel(service.panel_id)
+                resolved_panel = await catalog.resolve_panel(service.panel_id)
+                if service.panel_id != resolved_panel.id:
+                    logger.info(
+                        "Assigning legacy service %s to default panel %s",
+                        service.id,
+                        resolved_panel.id,
+                    )
+                    service.panel_id = resolved_panel.id
+                panel = await catalog.client_for_panel(resolved_panel.id)
                 total_mb = await panel.total_used_mb(service.pasarguard_username)
                 delta_mb = max(0, total_mb - service.last_traffic_mb)
                 if delta_mb == 0:
@@ -87,13 +95,16 @@ async def sync_traffic_usage(bot: Bot) -> None:
                         user.telegram_id,
                         f"موجودی کیف پول شما کم است: {user.wallet_balance_toman:,} تومان. لطفاً کیف پول را شارژ کنید.",
                     )
-            except PasarGuardError:
+            except PasarGuardError as exc:
                 logger.exception("PasarGuard sync failed for service %s", service.id)
                 await send_supergroup_message(
                     session,
                     bot,
                     "errors",
-                    f"خطا در همگام‌سازی مصرف\nسرویس: #{service.id}\nکاربر: {user.telegram_id}",
+                    f"خطا در همگام‌سازی مصرف\n"
+                    f"سرویس: #{service.id}\n"
+                    f"کاربر: {user.telegram_id}\n"
+                    f"جزئیات: {str(exc)[:300]}",
                 )
         await session.commit()
 

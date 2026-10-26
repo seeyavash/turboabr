@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decrypt_secret, encrypt_secret
 from app.db.models import PanelTemplate, PasarGuardPanel, ProductPlan
-from app.integrations.pasarguard import PasarGuardClient
+from app.integrations.pasarguard import PasarGuardClient, PasarGuardError
 
 
 class CatalogService:
@@ -27,6 +27,16 @@ class CatalogService:
             select(PanelTemplate).where(PanelTemplate.panel_id == panel_id).order_by(PanelTemplate.id)
         )
         return list(result.scalars())
+
+    async def resolve_panel(self, panel_id: int | None) -> PasarGuardPanel:
+        """Resolve legacy services/plans without a panel to the default active panel."""
+        panel = await self.session.get(PasarGuardPanel, panel_id) if panel_id is not None else None
+        if panel is None:
+            panels = await self.active_panels()
+            panel = panels[0] if panels else None
+        if panel is None:
+            raise PasarGuardError("No active PasarGuard panel is configured")
+        return panel
 
     async def add_panel(
         self,
@@ -87,11 +97,7 @@ class CatalogService:
         return template
 
     async def client_for_panel(self, panel_id: int | None) -> PasarGuardClient:
-        if panel_id is None:
-            return PasarGuardClient()
-        panel = await self.session.get(PasarGuardPanel, panel_id)
-        if not panel:
-            return PasarGuardClient()
+        panel = await self.resolve_panel(panel_id)
         group_ids = panel.group_ids or []
         subscription_client_type = panel.subscription_client_type
         if not group_ids:
