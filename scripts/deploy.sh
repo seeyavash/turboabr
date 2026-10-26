@@ -36,10 +36,20 @@ main() {
         echo 'Deployment requires the main branch.' >&2
         exit 1
     }
-    [[ -z "$(git status --porcelain --untracked-files=no)" ]] || {
-        echo 'Tracked files have local changes; commit or resolve them before deploying.' >&2
-        exit 1
-    }
+    local dirty_status dirty_path
+    dirty_status="$(git status --porcelain --untracked-files=no)"
+    if [[ -n "$dirty_status" ]]; then
+        while IFS= read -r dirty_path; do
+            dirty_path="${dirty_path:3}"
+            [[ "$dirty_path" == 'docker-compose.yml' ]] || {
+                echo 'Tracked files other than docker-compose.yml have local changes:' >&2
+                echo "$dirty_status" >&2
+                echo 'Commit or resolve them before deploying.' >&2
+                exit 1
+            }
+        done <<< "$dirty_status"
+        echo 'Keeping the server-local docker-compose.yml changes.'
+    fi
 
     local -a compose=(
         docker compose
